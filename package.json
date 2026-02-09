@@ -1,0 +1,25 @@
+{
+  "name": "chome-extention",
+  "version": "1.0.0",
+  "description": "Console Signal is a Chrome MV3 extension for capturing page console output, filtering it, previewing exactly what will be copied, and optionally generating a condensed AI debugging brief using DeepSeek.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint . --fix",
+    "format": "prettier --write .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.3.0",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.3.0",
+    "prettier": "^3.8.1",
+    "vite": "^7.3.1"
+  }
+}

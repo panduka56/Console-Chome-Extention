@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Console Signal</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brandIcon" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <defs>
+                <linearGradient
+                  id="brandAccent"
+                  x1="0%"
+                  y1="0%"
+                  x2="100%"
+                  y2="100%"
+                >
+                  <stop offset="0%" stop-color="#11e8a4" />
+                  <stop offset="100%" stop-color="#25f4d1" />
+                </linearGradient>
+              </defs>
+              <rect x="4" y="4" width="56" height="56" rx="16" fill="#0e1517" />
+              <path
+                d="M20 26 L30 36 L20 46"
+                stroke="url(#brandAccent)"
+                stroke-width="4.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="none"
+              />
+              <rect
+                x="35"
+                y="39"
+                width="10"
+                height="3.8"
+                rx="1.9"
+                fill="url(#brandAccent)"
+              />
+            </svg>
+          </div>
+          <div>
+            <h1>Console Signal</h1>
+            <p class="sub">Capture, filter, condense.</p>
+          </div>
+        </div>
+        <div class="topbarActions">
+          <span id="activeFormat" class="badge">AI compact</span>
+          <button
+            id="refreshButton"
+            class="iconBtn"
+            type="button"
+            title="Refresh preview"
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+
+      <nav class="panelTabs" aria-label="Extension sections">
+        <button class="panelTab is-active" type="button" data-view="logs">
+          Main
+        </button>
+        <button class="panelTab" type="button" data-view="ai">DeepSeek</button>
+        <button class="panelTab" type="button" data-view="labs">Labs</button>
+      </nav>
+
+      <section id="logsView" class="view is-active">
+        <section class="card">
+          <div class="cardHead">
+            <h2>Capture Scope</h2>
+          </div>
+          <div class="scopeSwitch" role="radiogroup" aria-label="Log scope">
+            <button
+              class="scopeBtn is-active"
+              type="button"
+              data-level-preset="errors"
+            >
+              Errors
+            </button>
+            <button class="scopeBtn" type="button" data-level-preset="warnings">
+              Medium
+            </button>
+            <button class="scopeBtn" type="button" data-level-preset="full">
+              Full
+            </button>
+          </div>
+
+          <div class="grid">
+            <label>
+              <span>Format</span>
+              <select id="formatSelect">
+                <option value="ai">AI compact</option>
+                <option value="xml">XML compact</option>
+                <option value="plain">Plain text</option>
+              </select>
+            </label>
+            <label class="toggleLabel" for="optimizeToggle">
+              <span>Token Saver</span>
+              <span class="toggleWrap">
+                <input id="optimizeToggle" type="checkbox" checked />
+                <i class="toggleTrack"></i>
+                <strong>Dedupe + stack trim</strong>
+              </span>
+            </label>
+            <label>
+              <span>Max entries</span>
+              <input
+                id="maxEntriesInput"
+                type="number"
+                min="50"
+                max="5000"
+                step="50"
+                value="500"
+              />
+            </label>
+            <label>
+              <span>Max chars/log</span>
+              <input
+                id="maxCharsInput"
+                type="number"
+                min="200"
+                max="3000"
+                step="100"
+                value="700"
+              />
+            </label>
+          </div>
+
+          <div class="stats">
+            <article>
+              <p>Total</p>
+              <strong id="statTotal">0</strong>
+            </article>
+            <article>
+              <p>Selected</p>
+              <strong id="statSelected">0</strong>
+            </article>
+            <article>
+              <p>Unique</p>
+              <strong id="statUnique">0</strong>
+            </article>
+            <article>
+              <p>Est tokens</p>
+              <strong id="statTokens">0</strong>
+            </article>
+          </div>
+
+          <div class="previewWrap">
+            <div class="previewHead">
+              <h3>Payload Preview</h3>
+              <button id="copyButton" class="actionBtn" type="button">
+                Copy Preview
+              </button>
+            </div>
+            <pre id="previewText">Loading preview...</pre>
+          </div>
+        </section>
+      </section>
+
+      <section id="aiView" class="view">
+        <section class="card aiCard">
+          <div class="cardHead">
+            <h2>DeepSeek Condenser</h2>
+            <span id="apiKeyState" class="statePill stateWarn"
+              >Key missing</span
+            >
+          </div>
+          <p class="hint">
+            Key is saved in Chrome local extension storage and used only for
+            requests to DeepSeek API.
+          </p>
+          <div class="apiKeyRow">
+            <input
+              id="apiKeyInput"
+              type="password"
+              autocomplete="off"
+              placeholder="Paste DeepSeek API key"
+            />
+            <button id="saveKeyButton" class="miniBtn" type="button">
+              Save
+            </button>
+            <button id="clearKeyButton" class="miniBtn muted" type="button">
+              Clear
+            </button>
+          </div>
+          <div class="grid">
+            <label>
+              <span>Model</span>
+              <select id="modelSelect">
+                <option value="deepseek-chat">deepseek-chat</option>
+                <option value="deepseek-reasoner">deepseek-reasoner</option>
+              </select>
+            </label>
+            <label>
+              <span>AI output style</span>
+              <select id="summaryStyleSelect">
+                <option value="brief">Brief (recommended)</option>
+                <option value="steps">Step-by-step fix plan</option>
+                <option value="rootcause">Root-cause focused</option>
+              </select>
+            </label>
+          </div>
+          <div class="aiActions">
+            <button
+              id="summarizeButton"
+              class="actionBtn primary"
+              type="button"
+            >
+              Generate AI Brief
+            </button>
+            <button id="copySummaryButton" class="actionBtn" type="button">
+              Copy Brief
+            </button>
+          </div>
+          <pre id="summaryText">
+AI brief will appear here after generation.</pre
+          >
+          <p id="aiStatus" class="statusLine">DeepSeek status: idle</p>
+        </section>
+      </section>
+
+      <section id="labsView" class="view">
+        <section class="card">
+          <div class="cardHead">
+            <h2>AI Context Extractor</h2>
+          </div>
+          <p class="hint">
+            Extract condensed page context for AI debugging prompts without
+            replacing Main console copy flow.
+          </p>
+          <div class="labsActions">
+            <button id="extractContextButton" class="actionBtn primary" type="button">
+              Generate Context
+            </button>
+            <button id="condenseContextButton" class="actionBtn" type="button">
+              Condense with AI
+            </button>
+            <button id="copyContextButton" class="actionBtn" type="button">
+              Copy Context
+            </button>
+          </div>
+          <pre id="contextText">
+AI context will appear here after generation.</pre
+          >
+          <pre id="contextAiText">
+AI condensed context will appear here after generation.</pre
+          >
+          <p id="contextStatus" class="statusLine">Context status: idle</p>
+        </section>
+      </section>
+
+      <p id="status" class="statusLine">Preparing preview...</p>
+    </main>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

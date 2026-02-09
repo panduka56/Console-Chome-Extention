@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Console Copy Helper",
+  "description": "Capture page console output and copy all logs to clipboard for troubleshooting.",
+  "version": "1.2.1",
+  "icons": {
+    "16": "src/icons/console-copy-16.png",
+    "32": "src/icons/console-copy-32.png",
+    "48": "src/icons/console-copy-48.png",
+    "128": "src/icons/console-copy-128.png"
+  },
+  "permissions": ["tabs", "clipboardWrite", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Copy captured console logs",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "src/icons/console-copy-16.png",
+      "32": "src/icons/console-copy-32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content-script.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/page-logger.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
