@@ -18,14 +18,15 @@ This extension gives you:
 - Live payload preview (copy exactly what you see)
 - Token-saving transforms (dedupe + stack trimming)
 - Optional DeepSeek summarization for concise developer briefs
-- Labs tab for condensed page-context extraction with optional AI condensation
+- Context tab for full-page extraction and AI-ready context packaging
+- Separate Settings tab for API key/model/output-style configuration
 
 ## Install (Unpacked)
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
-4. Select this project root folder.
+4. Select this project root folder (uses `manifest.json`), or select `dist/` after `npm run build`.
 5. Click **Reload** whenever files change.
 
 ## How To Use
@@ -39,27 +40,37 @@ This extension gives you:
 4. Verify in **Payload Preview**.
 5. Click **Copy Preview**.
 
-## Labs: AI Context Extractor
+## AI Brief (Console)
 
-1. Go to `Labs` tab.
-2. Click **Generate Context**.
-3. Optional: click **Condense with AI** (uses saved DeepSeek key).
-4. Click **Copy Context**.
+1. Go to `AI Brief` tab.
+2. Click **Generate AI Brief**.
+3. Click **Copy Brief**.
+
+This uses the console payload from Main and is focused on debugging failures.
+
+## Context: Page Context Pack
+
+1. Go to `Context` tab.
+2. Click **Extract Full Page**.
+3. Optional: click **Generate AI Context Brief** (uses saved DeepSeek key).
+4. Click **Copy Context Pack**.
 5. Paste into your AI tool.
 
-## DeepSeek Briefs
+This mode scans rendered page text and key UI elements, filters high-signal content, and does not depend on console logs.
 
-1. Go to `DeepSeek` tab.
+## Settings (DeepSeek)
+
+1. Go to `Settings` tab.
 2. Paste your DeepSeek key and click **Save**.
 3. Pick model and output style.
-4. Click **Generate AI Brief**.
-5. Click **Copy Brief**.
+4. These settings are used by `AI Brief` and `Context` AI condense.
 
 ## Tabs Overview
 
 - `Main`: log filters, stats, preview, copy (console-focused)
-- `DeepSeek`: key management + AI summary generation
-- `Labs`: page context extraction + optional AI condense
+- `AI Brief`: generate/copy concise debugging brief from console payload
+- `Context`: page context extraction + optional AI condense
+- `Settings`: DeepSeek key/model/style configuration
 
 ## Security Notes
 

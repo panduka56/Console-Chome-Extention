@@ -1,43 +1,15 @@
 (() => {
   const EVENT_NAME = '__CONSOLE_CAPTURE_EVENT__';
   const LOG_LIMIT = 5000;
-  const CONTEXT_MAX_TEXT_CHARS = 4500;
-  const CONTEXT_MAX_HEADINGS = 10;
-  const CONTEXT_MAX_LINKS = 10;
+  const CONTEXT_MAX_TEXT_CHARS = 12000;
+  const CONTEXT_FULL_TEXT_LIMIT = 26000;
+  const CONTEXT_RELEVANT_LINES = 18;
+  const CONTEXT_MAX_INTERACTIVES = 36;
+  const CONTEXT_MAX_HEADINGS = 20;
+  const CONTEXT_MAX_LINKS = 20;
   const CONTEXT_MAX_SECTIONS = 8;
-  const CONTEXT_MAX_LOG_ENTRIES = 25;
-  const CONTEXT_OUTPUT_MAX_CHARS = 7000;
-  const CONTEXT_NOISE_SELECTORS = [
-    'script',
-    'style',
-    'noscript',
-    'svg',
-    'canvas',
-    'iframe',
-    'template',
-    'nav',
-    'footer',
-    'header',
-    'aside',
-    'form',
-    'input',
-    'select',
-    'option',
-    'button',
-    '[role="navigation"]',
-    '[role="complementary"]',
-    '[aria-label*="cookie" i]',
-    '[id*="cookie" i]',
-    '[class*="cookie" i]',
-    '[id*="consent" i]',
-    '[class*="consent" i]',
-    '[id*="newsletter" i]',
-    '[class*="newsletter" i]',
-    '[id*="subscribe" i]',
-    '[class*="subscribe" i]',
-    '[data-testid*="cookie" i]',
-    '[data-testid*="consent" i]',
-  ];
+  const CONTEXT_OUTPUT_MAX_CHARS = 10000;
+  const CONTEXT_NOISE_SELECTORS = ['script', 'style', 'noscript', 'template'];
   const logs = [];
 
   function injectPageLogger() {
@@ -371,11 +343,44 @@ ${rows}
     return normalizeWhitespace(value);
   }
 
+  function isElementVisible(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+    if (element.hidden || element.getAttribute('aria-hidden') === 'true') {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    if (
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      Number(style.opacity) === 0
+    ) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0;
+  }
+
+  function getInteractiveLabel(element) {
+    return (
+      textFromNode(element) ||
+      normalizeWhitespace(element.getAttribute('aria-label') || '') ||
+      normalizeWhitespace(element.getAttribute('title') || '') ||
+      normalizeWhitespace(element.getAttribute('placeholder') || '') ||
+      normalizeWhitespace(element.getAttribute('name') || '') ||
+      normalizeWhitespace(element.id || '')
+    );
+  }
+
   function collectHeadings() {
     const headings = [];
     const seen = new Set();
     const nodes = document.querySelectorAll('h1, h2, h3');
     for (const node of nodes) {
+      if (!isElementVisible(node)) {
+        continue;
+      }
       const text = textFromNode(node);
       if (!text) {
         continue;
@@ -400,6 +405,9 @@ ${rows}
     const seen = new Set();
     const allLinks = document.querySelectorAll('a[href]');
     for (const node of allLinks) {
+      if (!isElementVisible(node)) {
+        continue;
+      }
       const href = node.href;
       if (
         !href ||
@@ -410,9 +418,7 @@ ${rows}
         continue;
       }
       const label =
-        textFromNode(node) ||
-        normalizeWhitespace(node.getAttribute('aria-label') || '') ||
-        normalizeWhitespace(node.getAttribute('title') || '');
+        getInteractiveLabel(node);
       const cleanedLabel = truncateText(label, 140);
       if (!cleanedLabel) {
         continue;
@@ -434,39 +440,9 @@ ${rows}
     return links;
   }
 
-  function pickContentRoot() {
-    const candidates = [
-      ['main', document.querySelector('main')],
-      ['article', document.querySelector('article')],
-      ['[role="main"]', document.querySelector('[role="main"]')],
-      ['#main', document.querySelector('#main')],
-      ['.main', document.querySelector('.main')],
-      ['#content', document.querySelector('#content')],
-      ['.content', document.querySelector('.content')],
-      ['body', document.body],
-      ['documentElement', document.documentElement],
-    ];
-
-    for (const [selector, node] of candidates) {
-      if (!node) {
-        continue;
-      }
-      if (textFromNode(node).length >= 240) {
-        return {
-          selector,
-          node,
-        };
-      }
-    }
-
-    return {
-      selector: 'documentElement',
-      node: document.documentElement,
-    };
-  }
-
-  function pruneContentRoot(node) {
-    const clone = node.cloneNode(true);
+  function pruneFullPageDom() {
+    const root = document.body || document.documentElement;
+    const clone = root.cloneNode(true);
     clone
       .querySelectorAll(CONTEXT_NOISE_SELECTORS.join(','))
       .forEach((noiseNode) => noiseNode.remove());
@@ -476,12 +452,86 @@ ${rows}
     return clone;
   }
 
-  function collectSectionSnippets(rootClone) {
+  function collectFullPageText() {
+    const source =
+      document.body?.innerText ||
+      document.documentElement?.innerText ||
+      '';
+    const lines = source
+      .split('\n')
+      .map((line) => normalizeWhitespace(line))
+      .filter(Boolean);
+    const fullText = lines.join('\n');
+    return {
+      sourceChars: source.length,
+      fullText,
+      lines,
+    };
+  }
+
+  function scoreRelevantLine(line, index) {
+    const hasKeyword = /(error|warning|failed|failure|critical|issue|problem|bug|exception|fix|payment|checkout|login|auth|order|total|price|api|token|required|important)/i.test(
+      line
+    );
+    const navNoise = /^(home|menu|search|about|contact|privacy|terms|cookies?)$/i.test(
+      line
+    );
+    let score = 0;
+    if (line.length >= 35 && line.length <= 220) {
+      score += 2;
+    } else if (line.length > 220) {
+      score += 1;
+    }
+    if (hasKeyword) {
+      score += 3;
+    }
+    if (/\d/.test(line)) {
+      score += 1;
+    }
+    if (/[$£€%]/.test(line)) {
+      score += 1;
+    }
+    if (index < 120) {
+      score += 1;
+    }
+    if (navNoise) {
+      score -= 3;
+    }
+    return score;
+  }
+
+  function collectRelevantLines(lines) {
+    const ranked = lines
+      .map((line, index) => ({ line, index, score: scoreRelevantLine(line, index) }))
+      .filter((item) => item.line.length >= 25 && item.score > 0)
+      .sort((a, b) => b.score - a.score || a.index - b.index);
+
+    const picked = [];
+    const seen = new Set();
+    for (const item of ranked) {
+      const key = item.line.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      picked.push(item.line);
+      if (picked.length >= CONTEXT_RELEVANT_LINES) {
+        break;
+      }
+    }
+
+    if (picked.length === 0) {
+      return lines.slice(0, CONTEXT_RELEVANT_LINES).map((line) => truncateText(line, 240));
+    }
+
+    return picked.map((line) => truncateText(line, 240));
+  }
+
+  function collectSectionSnippets(lines) {
     const snippets = [];
     const seen = new Set();
-    const nodes = rootClone.querySelectorAll('h1, h2, h3, p, li, blockquote');
-    for (const node of nodes) {
-      const text = textFromNode(node);
+    for (const line of lines) {
+      const text = normalizeWhitespace(line);
       if (text.length < 45) {
         continue;
       }
@@ -498,7 +548,47 @@ ${rows}
     return snippets;
   }
 
+  function collectInteractiveElements() {
+    const interactives = [];
+    const seen = new Set();
+    const nodes = document.querySelectorAll(
+      'a[href], button, input, select, textarea, [role="button"], [role="link"], [contenteditable="true"]'
+    );
+
+    for (const node of nodes) {
+      if (!isElementVisible(node)) {
+        continue;
+      }
+      const label = truncateText(getInteractiveLabel(node), 140);
+      if (!label) {
+        continue;
+      }
+      const tag = node.tagName.toLowerCase();
+      const type = normalizeWhitespace(node.getAttribute('type') || '');
+      const destination =
+        tag === 'a'
+          ? node.href
+          : normalizeWhitespace(node.getAttribute('action') || '');
+      const key = `${tag}|${label}|${destination}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      interactives.push({
+        element: type ? `${tag}[${type}]` : tag,
+        label,
+        destination: destination ? truncateText(destination, 220) : '',
+      });
+      if (interactives.length >= CONTEXT_MAX_INTERACTIVES) {
+        break;
+      }
+    }
+
+    return interactives;
+  }
+
   function buildDomStats() {
+    const allElements = document.querySelectorAll('*');
     const images = Array.from(document.images || []);
     const imagesWithoutAlt = images.filter((image) => {
       const alt = normalizeWhitespace(image.getAttribute('alt') || '');
@@ -506,6 +596,7 @@ ${rows}
     });
 
     return {
+      elementsScanned: allElements.length,
       links: document.querySelectorAll('a[href]').length,
       headings: document.querySelectorAll('h1, h2, h3').length,
       paragraphs: document.querySelectorAll('p').length,
@@ -531,13 +622,17 @@ ${rows}
     };
   }
 
-  function extractPageContext() {
-    const root = pickContentRoot();
-    const rootClone = pruneContentRoot(root.node);
+  function extractPageContext(options = {}) {
+    const rootClone = pruneFullPageDom();
     const cleanedText = textFromNode(rootClone);
-    const summaryText = truncateText(cleanedText, CONTEXT_MAX_TEXT_CHARS);
-    const snippets = collectSectionSnippets(rootClone);
-    const truncated = summaryText.length < cleanedText.length;
+    const { sourceChars, fullText, lines } = collectFullPageText();
+    const maxContextChars = Number.isFinite(options.maxContextChars)
+      ? options.maxContextChars
+      : CONTEXT_FULL_TEXT_LIMIT;
+    const fullTextSample = truncateText(fullText, maxContextChars);
+    const relevantLines = collectRelevantLines(lines);
+    const snippets = collectSectionSnippets(lines);
+    const truncated = fullTextSample.length < fullText.length;
 
     return {
       page: {
@@ -567,13 +662,17 @@ ${rows}
         ),
       },
       content: {
-        rootSelector: root.selector,
-        summaryText,
+        rootSelector: 'body',
+        summaryText: truncateText(cleanedText, CONTEXT_MAX_TEXT_CHARS),
+        fullTextSample,
+        relevantLines,
         snippets,
+        interactiveElements: collectInteractiveElements(),
         headings: collectHeadings(),
         keyLinks: collectKeyLinks(),
-        textCharsOriginal: cleanedText.length,
-        textCharsIncluded: summaryText.length,
+        textCharsOriginal: fullText.length,
+        textCharsIncluded: fullTextSample.length,
+        renderedTextChars: sourceChars,
         textWasTruncated: truncated,
       },
       structure: {
@@ -583,11 +682,12 @@ ${rows}
     };
   }
 
-  function buildContextMarkdown(pageContext, consoleReport) {
+  function buildContextMarkdown(pageContext) {
     const lines = [];
-    lines.push('# AI Context');
+    lines.push('# Page Context (Relevant From Full Page Capture)');
     lines.push(`- URL: ${pageContext.page.url}`);
     lines.push(`- Title: ${pageContext.page.title || '[none]'}`);
+    lines.push('- Scan mode: full rendered DOM text (console excluded)');
     if (pageContext.meta.description) {
       lines.push(`- Description: ${pageContext.meta.description}`);
     }
@@ -595,6 +695,19 @@ ${rows}
       lines.push(`- Canonical: ${pageContext.meta.canonical}`);
     }
     lines.push(`- Captured: ${pageContext.page.capturedAt}`);
+    lines.push(
+      `- Coverage: ${pageContext.content.renderedTextChars} rendered chars across ${pageContext.structure.domStats.elementsScanned || 0} DOM elements`
+    );
+    lines.push('');
+
+    lines.push('## Most Relevant Content');
+    if (pageContext.content.relevantLines.length > 0) {
+      pageContext.content.relevantLines.forEach((line) => {
+        lines.push(`- ${line}`);
+      });
+    } else {
+      lines.push('- No high-signal lines detected; use supporting snippets below.');
+    }
     lines.push('');
 
     if (pageContext.content.headings.length > 0) {
@@ -617,6 +730,18 @@ ${rows}
     }
     lines.push('');
 
+    if (pageContext.content.interactiveElements.length > 0) {
+      lines.push('## Key UI Elements');
+      pageContext.content.interactiveElements.forEach((item) => {
+        if (item.destination) {
+          lines.push(`- ${item.element}: ${item.label} -> ${item.destination}`);
+        } else {
+          lines.push(`- ${item.element}: ${item.label}`);
+        }
+      });
+      lines.push('');
+    }
+
     if (pageContext.content.keyLinks.length > 0) {
       lines.push('## Key Links');
       pageContext.content.keyLinks.forEach((link) => {
@@ -624,35 +749,6 @@ ${rows}
         lines.push(`- [${marker}] ${link.text}: ${link.href}`);
       });
       lines.push('');
-    }
-
-    const consoleEntries = consoleReport.entries
-      .slice(0, CONTEXT_MAX_LOG_ENTRIES)
-      .map((entry, index) => ({
-        index: index + 1,
-        timestamp: entry.timestamp,
-        level: entry.level,
-        source: entry.source,
-        count: entry.count,
-        message: entry.message,
-      }));
-    lines.push('## Console Signals');
-    if (consoleEntries.length === 0) {
-      lines.push('- No console entries captured in current page session.');
-    } else {
-      lines.push(
-        `- Captured ${consoleReport.totalCount} selected entries (${consoleReport.uniqueCount} unique).`
-      );
-      consoleEntries.forEach((entry) => {
-        lines.push(
-          `- [${entry.level}] ${truncateText(entry.message, 220)}`
-        );
-      });
-      if (consoleReport.entries.length > consoleEntries.length) {
-        lines.push(
-          `- ... ${consoleReport.entries.length - consoleEntries.length} additional entries omitted`
-        );
-      }
     }
 
     lines.push('');
@@ -674,24 +770,17 @@ ${rows}
   }
 
   function buildContextPayload(options) {
-    const consoleReport = buildEntries({
-      format: 'ai',
-      levelPreset: options.levelPreset,
-      optimizeForAi: true,
-      maxEntries: options.maxEntries,
-      maxCharsPerEntry: options.maxCharsPerEntry,
-      maxStackLines: options.maxStackLines,
+    const pageContext = extractPageContext({
+      maxContextChars: options.maxContextChars,
     });
-
-    const pageContext = extractPageContext();
-    const text = buildContextMarkdown(pageContext, consoleReport);
+    const text = buildContextMarkdown(pageContext);
 
     return {
       text,
       pageUrl: pageContext.page.url,
-      count: consoleReport.totalCount,
-      uniqueCount: consoleReport.uniqueCount,
-      totalCaptured: consoleReport.totalCaptured,
+      sourceTextChars: pageContext.content.renderedTextChars,
+      elementsScanned: pageContext.structure.domStats.elementsScanned || 0,
+      relevantCount: pageContext.content.relevantLines.length,
       estimatedTokens: estimateTokenCount(text),
     };
   }
@@ -739,6 +828,24 @@ ${rows}
     if (!message || typeof message.type !== 'string') {
       return;
     }
+    if (sender && sender.id && sender.id !== chrome.runtime.id) {
+      return;
+    }
+
+    if (message.type === 'GET_AI_CONTEXT') {
+      const maxContextChars = Number(message.maxContextChars);
+      const contextPayload = buildContextPayload({
+        maxContextChars: Number.isFinite(maxContextChars)
+          ? Math.min(60000, Math.max(6000, Math.floor(maxContextChars)))
+          : CONTEXT_FULL_TEXT_LIMIT,
+      });
+      sendResponse({
+        ok: true,
+        format: 'ai-context-markdown',
+        ...contextPayload,
+      });
+      return;
+    }
 
     const requestedLevelPreset =
       typeof message.levelPreset === 'string' ? message.levelPreset : 'full';
@@ -758,16 +865,6 @@ ${rows}
         : 700,
       maxStackLines: Number.isFinite(maxStackLines) ? maxStackLines : 6,
     };
-
-    if (message.type === 'GET_AI_CONTEXT') {
-      const contextPayload = buildContextPayload(commonOptions);
-      sendResponse({
-        ok: true,
-        format: 'ai-context-markdown',
-        ...contextPayload,
-      });
-      return;
-    }
 
     if (message.type !== 'GET_CAPTURED_CONSOLE') {
       return;

@@ -38,7 +38,7 @@ python3 -m json.tool manifest.json >/dev/null
 - `content-script.js` (extension context in tab):
   - stores captured entries
   - builds filtered/export payload (`ai`, `xml`, `plain`) for Main
-  - builds page context markdown payload for Labs (`GET_AI_CONTEXT`)
+  - builds page context markdown payload for Context tab (`GET_AI_CONTEXT`)
   - returns responses via `chrome.runtime.onMessage`
 
 ### Popup pipeline
@@ -48,7 +48,9 @@ python3 -m json.tool manifest.json >/dev/null
   - requests report from active tab
   - renders stats + preview
   - handles copy actions
-  - handles Labs context extract + optional AI condense
+  - handles AI Brief generation from console payload
+  - handles Context tab extract + optional AI condense
+  - handles separate Settings tab for key/model/style
   - stores UI settings in `localStorage`
   - stores DeepSeek key/model in `chrome.storage.local`
 
@@ -66,8 +68,9 @@ python3 -m json.tool manifest.json >/dev/null
 - Avoid cramped UI; maintain section spacing.
 - New features should fit tab model:
   - `Main` for log capture/export
-  - `DeepSeek` for AI functions
-  - `Labs` for experimental tools like context extraction
+  - `AI Brief` for log-focused AI summarization
+  - `Context` for full-page context extraction and optional AI condense
+  - `Settings` for provider config and AI preferences
 
 ## 5) Security Rules
 
@@ -94,9 +97,9 @@ python3 -m json.tool manifest.json >/dev/null
   - [ ] Key save/clear works
   - [ ] Generate AI Brief works
   - [ ] Copy Brief works
-  - [ ] Generate Context works (Labs)
-  - [ ] Condense with AI works (Labs)
-  - [ ] Copy Context works (Labs)
+  - [ ] Extract Full Page works (Context)
+  - [ ] Generate AI Context Brief works (Context)
+  - [ ] Copy Context Pack works (Context)
 - [ ] Update `README.md` if behavior changed
 
 ## 8) Common Pitfalls

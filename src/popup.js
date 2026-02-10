@@ -32,6 +32,7 @@ const apiKeyInput = document.getElementById('apiKeyInput');
 const activeFormatEl = document.getElementById('activeFormat');
 const apiKeyStateEl = document.getElementById('apiKeyState');
 const contextStatusEl = document.getElementById('contextStatus');
+const settingsStatusEl = document.getElementById('settingsStatus');
 
 const statTotalEl = document.getElementById('statTotal');
 const statSelectedEl = document.getElementById('statSelected');
@@ -43,9 +44,11 @@ const levelPresetButtons = Array.from(
 const panelTabButtons = Array.from(document.querySelectorAll('[data-view]'));
 const viewMap = {
   logs: document.getElementById('logsView'),
-  ai: document.getElementById('aiView'),
-  labs: document.getElementById('labsView'),
+  brief: document.getElementById('briefView'),
+  context: document.getElementById('contextView'),
+  settings: document.getElementById('settingsView'),
 };
+const CONTEXT_EXTRACTION_MAX_CHARS = 42000;
 
 const SETTINGS_KEY = 'console-copy-helper-settings-v4';
 const DEFAULT_SETTINGS = {
@@ -66,6 +69,7 @@ let inputDebounceTimer = null;
 
 let lastGeneratedSummary = '';
 let lastGeneratedContext = '';
+let lastGeneratedContextPageUrl = '';
 let lastCondensedContext = '';
 
 function setStatus(message, type = '') {
@@ -89,6 +93,14 @@ function setContextStatus(message, type = '') {
   contextStatusEl.classList.remove('success', 'error');
   if (type) {
     contextStatusEl.classList.add(type);
+  }
+}
+
+function setSettingsStatus(message, type = '') {
+  settingsStatusEl.textContent = message;
+  settingsStatusEl.classList.remove('success', 'error');
+  if (type) {
+    settingsStatusEl.classList.add(type);
   }
 }
 
@@ -217,12 +229,17 @@ function writeSettingsToUi(settings) {
 }
 
 function normalizeSettings(parsed) {
+  const requestedActiveView =
+    parsed && typeof parsed.activeView === 'string'
+      ? parsed.activeView === 'labs'
+        ? 'context'
+        : parsed.activeView
+      : '';
+
   return {
     activeView:
-      parsed &&
-      typeof parsed.activeView === 'string' &&
-      ['logs', 'ai', 'labs'].includes(parsed.activeView)
-        ? parsed.activeView
+      ['logs', 'brief', 'context', 'settings'].includes(requestedActiveView)
+        ? requestedActiveView
         : DEFAULT_SETTINGS.activeView,
     format:
       parsed &&
@@ -380,10 +397,10 @@ async function loadDeepSeekConfig() {
       modelSelect.value = config.model;
       saveSettings();
     }
-    setAiStatus('DeepSeek status: ready', 'success');
+    setSettingsStatus('Settings status: ready', 'success');
   } catch (error) {
     setApiKeyState(false);
-    setAiStatus(`DeepSeek status: ${error.message}`, 'error');
+    setSettingsStatus(`Settings status: ${error.message}`, 'error');
   }
 }
 
@@ -424,12 +441,10 @@ function buildRequestPayload(settings) {
   };
 }
 
-function buildContextRequestPayload(settings) {
+function buildContextRequestPayload() {
   return {
     type: 'GET_AI_CONTEXT',
-    levelPreset: settings.levelPreset,
-    maxEntries: settings.maxEntries,
-    maxCharsPerEntry: settings.maxCharsPerEntry,
+    maxContextChars: CONTEXT_EXTRACTION_MAX_CHARS,
   };
 }
 
@@ -444,10 +459,10 @@ async function sendReportRequest(tabId, settings) {
   return response;
 }
 
-async function sendContextRequest(tabId, settings) {
+async function sendContextRequest(tabId) {
   return withTimeout(
-    chrome.tabs.sendMessage(tabId, buildContextRequestPayload(settings)),
-    7000
+    chrome.tabs.sendMessage(tabId, buildContextRequestPayload()),
+    12000
   );
 }
 
@@ -505,11 +520,11 @@ async function fetchReportFromActiveTab(settings) {
   }
 }
 
-async function fetchContextFromActiveTab(settings) {
+async function fetchContextFromActiveTab() {
   const activeTab = await getActiveTabOrThrow();
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await sendContextRequest(activeTab.id, settings);
+      const response = await sendContextRequest(activeTab.id);
       if (isValidContextResponse(response)) {
         return response;
       }
@@ -614,18 +629,23 @@ async function copyPreview() {
 }
 
 async function generatePageContext() {
-  const settings = readSettingsFromUi();
   extractContextButton.disabled = true;
-  setContextStatus('Extracting page context...');
+  setContextStatus('Extracting full-page context...');
 
   try {
-    const response = await fetchContextFromActiveTab(settings);
+    const response = await fetchContextFromActiveTab();
     contextTextEl.textContent = response.text;
     lastGeneratedContext = response.text;
+    lastGeneratedContextPageUrl =
+      typeof response.pageUrl === 'string' ? response.pageUrl : '';
     contextAiTextEl.textContent = 'AI condensed context will appear here after generation.';
     lastCondensedContext = '';
+    const estimatedTokens = Number(response.estimatedTokens) || 0;
+    const sourceTextChars = Number(response.sourceTextChars) || 0;
+    const elementsScanned = Number(response.elementsScanned) || 0;
+    const relevantCount = Number(response.relevantCount) || 0;
     setContextStatus(
-      `Context ready (~${response.estimatedTokens} tokens).`,
+      `Context ready (~${estimatedTokens} tokens, scanned ${sourceTextChars} chars, ${elementsScanned} elements, ${relevantCount} relevant lines).`,
       'success'
     );
     return response.text;
@@ -761,7 +781,7 @@ async function condensePageContextWithAi() {
   const config = await getDeepSeekLocalConfig();
   if (!config.apiKey) {
     setApiKeyState(false);
-    setContextStatus('Save DeepSeek key in DeepSeek tab first.', 'error');
+    setContextStatus('Save DeepSeek key in Settings tab first.', 'error');
     return;
   }
 
@@ -773,7 +793,7 @@ async function condensePageContextWithAi() {
       apiKey: config.apiKey,
       model: readSettingsFromUi().model,
       contextText: contextPayload,
-      pageUrl: lastReport?.pageUrl || '',
+      pageUrl: lastGeneratedContextPageUrl || lastReport?.pageUrl || '',
     });
     contextAiTextEl.textContent = result.summary;
     lastCondensedContext = result.summary;
@@ -861,7 +881,7 @@ function trimToMaxChars(text, maxChars) {
     return text;
   }
   const hidden = text.length - maxChars;
-  return `${text.slice(0, maxChars)}\n\n... [truncated ${hidden} chars before sending to AI]`
+  return `${text.slice(0, maxChars)}\n\n... [truncated ${hidden} chars before sending to AI]`;
 }
 
 function buildSystemPrompt() {
@@ -1004,7 +1024,7 @@ function isBackgroundUnavailableError(error) {
 async function saveDeepSeekKey() {
   const input = apiKeyInput.value.trim();
   if (!input) {
-    setAiStatus('Please paste an API key first.', 'error');
+    setSettingsStatus('Please paste an API key first.', 'error');
     return;
   }
 
@@ -1016,9 +1036,9 @@ async function saveDeepSeekKey() {
     });
     setApiKeyState(true);
     apiKeyInput.value = '';
-    setAiStatus('API key saved locally.', 'success');
+    setSettingsStatus('API key saved locally.', 'success');
   } catch (error) {
-    setAiStatus(`Save failed: ${error.message}`, 'error');
+    setSettingsStatus(`Save failed: ${error.message}`, 'error');
   }
 }
 
@@ -1026,9 +1046,9 @@ async function clearDeepSeekKey() {
   try {
     await clearDeepSeekLocalKey();
     setApiKeyState(false);
-    setAiStatus('API key cleared.', 'success');
+    setSettingsStatus('API key cleared.', 'success');
   } catch (error) {
-    setAiStatus(`Clear failed: ${error.message}`, 'error');
+    setSettingsStatus(`Clear failed: ${error.message}`, 'error');
   }
 }
 
@@ -1213,7 +1233,9 @@ async function initialize() {
   loadSettings();
   saveSettings();
   bindEvents();
+  setAiStatus('AI brief status: idle');
   setContextStatus('Context status: idle');
+  setSettingsStatus('Settings status: idle');
   contextAiTextEl.textContent = 'AI condensed context will appear here after generation.';
   await Promise.all([refreshPreview(), loadDeepSeekConfig()]);
 }

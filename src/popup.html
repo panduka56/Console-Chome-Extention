@@ -65,8 +65,15 @@
         <button class="panelTab is-active" type="button" data-view="logs">
           Main
         </button>
-        <button class="panelTab" type="button" data-view="ai">DeepSeek</button>
-        <button class="panelTab" type="button" data-view="labs">Labs</button>
+        <button class="panelTab" type="button" data-view="brief">
+          AI Brief
+        </button>
+        <button class="panelTab" type="button" data-view="context">
+          Context
+        </button>
+        <button class="panelTab" type="button" data-view="settings">
+          Settings
+        </button>
       </nav>
 
       <section id="logsView" class="view is-active">
@@ -162,17 +169,75 @@
         </section>
       </section>
 
-      <section id="aiView" class="view">
+      <section id="briefView" class="view">
         <section class="card aiCard">
           <div class="cardHead">
-            <h2>DeepSeek Condenser</h2>
+            <h2>AI Brief From Console</h2>
+          </div>
+          <p class="hint">
+            Uses captured console payload from Main and your configured
+            DeepSeek settings.
+          </p>
+          <div class="aiActions">
+            <button
+              id="summarizeButton"
+              class="actionBtn primary"
+              type="button"
+            >
+              Generate AI Brief
+            </button>
+            <button id="copySummaryButton" class="actionBtn" type="button">
+              Copy Brief
+            </button>
+          </div>
+          <pre id="summaryText">
+AI brief will appear here after generation.</pre
+          >
+          <p id="aiStatus" class="statusLine">AI brief status: idle</p>
+        </section>
+      </section>
+
+      <section id="contextView" class="view">
+        <section class="card">
+          <div class="cardHead">
+            <h2>Page Context Pack</h2>
+          </div>
+          <p class="hint">
+            Scans full rendered page content and key UI elements, then filters
+            it into an AI-ready handoff. Console logs are not used in this
+            mode.
+          </p>
+          <div class="contextActions">
+            <button id="extractContextButton" class="actionBtn primary" type="button">
+              Extract Full Page
+            </button>
+            <button id="condenseContextButton" class="actionBtn" type="button">
+              Generate AI Context Brief
+            </button>
+            <button id="copyContextButton" class="actionBtn" type="button">
+              Copy Context Pack
+            </button>
+          </div>
+          <pre id="contextText">
+AI context will appear here after generation.</pre
+          >
+          <pre id="contextAiText">
+AI condensed context will appear here after generation.</pre
+          >
+          <p id="contextStatus" class="statusLine">Context status: idle</p>
+        </section>
+      </section>
+
+      <section id="settingsView" class="view">
+        <section class="card aiCard">
+          <div class="cardHead">
+            <h2>DeepSeek Settings</h2>
             <span id="apiKeyState" class="statePill stateWarn"
               >Key missing</span
             >
           </div>
           <p class="hint">
-            Key is saved in Chrome local extension storage and used only for
-            requests to DeepSeek API.
+            API key and model settings are saved locally in extension storage.
           </p>
           <div class="apiKeyRow">
             <input
@@ -205,52 +270,7 @@
               </select>
             </label>
           </div>
-          <div class="aiActions">
-            <button
-              id="summarizeButton"
-              class="actionBtn primary"
-              type="button"
-            >
-              Generate AI Brief
-            </button>
-            <button id="copySummaryButton" class="actionBtn" type="button">
-              Copy Brief
-            </button>
-          </div>
-          <pre id="summaryText">
-AI brief will appear here after generation.</pre
-          >
-          <p id="aiStatus" class="statusLine">DeepSeek status: idle</p>
-        </section>
-      </section>
-
-      <section id="labsView" class="view">
-        <section class="card">
-          <div class="cardHead">
-            <h2>AI Context Extractor</h2>
-          </div>
-          <p class="hint">
-            Extract condensed page context for AI debugging prompts without
-            replacing Main console copy flow.
-          </p>
-          <div class="labsActions">
-            <button id="extractContextButton" class="actionBtn primary" type="button">
-              Generate Context
-            </button>
-            <button id="condenseContextButton" class="actionBtn" type="button">
-              Condense with AI
-            </button>
-            <button id="copyContextButton" class="actionBtn" type="button">
-              Copy Context
-            </button>
-          </div>
-          <pre id="contextText">
-AI context will appear here after generation.</pre
-          >
-          <pre id="contextAiText">
-AI condensed context will appear here after generation.</pre
-          >
-          <p id="contextStatus" class="statusLine">Context status: idle</p>
+          <p id="settingsStatus" class="statusLine">Settings status: idle</p>
         </section>
       </section>
 
