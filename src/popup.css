@@ -145,28 +145,71 @@ h1 {
     inset 0 1px 0 rgb(255 255 255 / 5%);
 }
 
-.panelTabs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+.navBar {
   margin-bottom: 12px;
 }
 
-.panelTab {
+.categorySwitch {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.categoryBtn {
   border: 1px solid var(--line);
   border-radius: 10px;
   color: var(--text-2);
-  background: #182123;
-  padding: 8px 7px;
-  font-size: 11px;
+  background: #1e292b;
+  padding: 7px 6px;
+  font-size: 10px;
   font-weight: 700;
   cursor: pointer;
+  transition: all 140ms ease;
 }
 
-.panelTab.is-active {
+.categoryBtn:hover {
+  border-color: rgb(37 244 209 / 42%);
+}
+
+.categoryBtn.is-active {
   color: #082017;
+  background: linear-gradient(95deg, var(--mint) 0%, var(--mint-soft) 100%);
   border-color: transparent;
-  background: linear-gradient(95deg, var(--mint), var(--mint-soft));
+}
+
+.subTabs {
+  display: flex;
+  gap: 6px;
+}
+
+.subTabs:empty,
+.subTabs[hidden] {
+  display: none;
+}
+
+.subTab {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-2);
+  background: #182123;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  flex: 1;
+  text-align: center;
+  transition: all 140ms ease;
+}
+
+.subTab:hover {
+  border-color: rgb(37 244 209 / 42%);
+}
+
+.subTab.is-active {
+  color: var(--mint-soft);
+  border-color: rgb(37 244 209 / 45%);
+  background: rgb(17 232 164 / 12%);
 }
 
 .cardHead {
@@ -229,7 +272,8 @@ label span {
 
 select,
 input[type='number'],
-input[type='password'] {
+input[type='password'],
+input[type='text'] {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -243,6 +287,10 @@ input[type='password'] {
 select:focus,
 input:focus {
   border-color: rgb(37 244 209 / 55%);
+}
+
+.inlineInput {
+  margin-top: 6px;
 }
 
 .toggleWrap {
@@ -453,14 +501,20 @@ h3 {
 #status.success,
 #aiStatus.success,
 #contextStatus.success,
-#settingsStatus.success {
+#settingsStatus.success,
+#seoStatus.success,
+#schemaStatus.success,
+#sitemapStatus.success {
   color: var(--ok);
 }
 
 #status.error,
 #aiStatus.error,
 #contextStatus.error,
-#settingsStatus.error {
+#settingsStatus.error,
+#seoStatus.error,
+#schemaStatus.error,
+#sitemapStatus.error {
   color: var(--danger);
 }
 
@@ -469,10 +523,223 @@ button:disabled {
   cursor: default;
 }
 
+/* SEO Panel */
+.seoActions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.seoResults {
+  margin-top: 8px;
+}
+
+.seoSection {
+  margin-bottom: 10px;
+}
+
+.seoSection h3 {
+  margin: 0 0 6px;
+  font-size: 10px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.seoItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgb(181 216 210 / 8%);
+}
+
+.seoItem:last-child {
+  border-bottom: none;
+}
+
+.seoIndicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.seoIndicator.pass { background: var(--ok); }
+.seoIndicator.warn { background: #ffb74d; }
+.seoIndicator.fail { background: var(--danger); }
+.seoIndicator.info { background: var(--text-3); }
+
+.seoLabel {
+  font-size: 10px;
+  color: var(--text-3);
+  min-width: 72px;
+  flex-shrink: 0;
+}
+
+.seoValue {
+  font-size: 11px;
+  color: var(--text-1);
+  word-break: break-word;
+  flex: 1;
+}
+
+.seoCharCount {
+  font-size: 9px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* Schema Panel */
+.schemaActions {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.schemaResults {
+  margin-top: 8px;
+}
+
+.schemaItem {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.schemaItemHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: rgb(14 20 22 / 70%);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-1);
+  user-select: none;
+}
+
+.schemaItemHead:hover {
+  background: rgb(14 20 22 / 90%);
+}
+
+.schemaBadges {
+  display: flex;
+  gap: 5px;
+}
+
+.schemaBadge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.schemaBadge.errors {
+  color: var(--danger);
+  background: rgb(255 110 110 / 15%);
+}
+
+.schemaBadge.warnings {
+  color: #ffb74d;
+  background: rgb(255 183 77 / 15%);
+}
+
+.schemaItemBody {
+  padding: 8px 10px;
+  display: none;
+  font-family: 'IBM Plex Mono', 'Consolas', 'Menlo', monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #c2f8e8;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.schemaItemBody.is-open {
+  display: block;
+}
+
+.schemaValidation {
+  padding: 6px 10px;
+  font-size: 10px;
+}
+
+.schemaError {
+  color: var(--danger);
+  font-size: 10px;
+}
+
+.schemaWarning {
+  color: #ffb74d;
+  font-size: 10px;
+}
+
+/* Sitemap Panel */
+.sitemapUrlInput {
+  margin-bottom: 8px;
+}
+
+.sitemapActions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.sitemapResults {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #0d1416 0%, #10191b 100%);
+  margin-top: 8px;
+}
+
+.sitemapResults:empty,
+.sitemapResults .hint {
+  border: none;
+  background: none;
+}
+
+.sitemapUrlItem {
+  padding: 5px 10px;
+  border-bottom: 1px solid rgb(181 216 210 / 8%);
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', 'Consolas', 'Menlo', monospace;
+  color: #c2f8e8;
+  word-break: break-all;
+}
+
+.sitemapUrlItem:last-child {
+  border-bottom: none;
+}
+
+.sitemapMeta {
+  font-size: 9px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.sitemapLoadMore {
+  padding: 8px;
+  text-align: center;
+}
+
 @media (max-width: 520px) {
   .grid,
   .aiActions,
-  .contextActions {
+  .contextActions,
+  .seoActions,
+  .schemaActions,
+  .sitemapActions {
     grid-template-columns: 1fr;
   }
 
@@ -482,5 +749,9 @@ button:disabled {
 
   .apiKeyRow {
     grid-template-columns: 1fr;
+  }
+
+  .categorySwitch {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -5,7 +5,7 @@ export default defineManifest({
   name: 'Console Copy Helper',
   description:
     'Capture page console output and copy all logs to clipboard for troubleshooting.',
-  version: '1.2.1',
+  version: '1.3.0',
   icons: {
     16: 'src/icons/console-copy-16.png',
     32: 'src/icons/console-copy-32.png',

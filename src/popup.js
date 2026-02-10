@@ -1,9 +1,38 @@
-const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions';
-const DEEPSEEK_STORAGE_KEYS = {
-  apiKey: 'deepseek_api_key',
-  model: 'deepseek_model',
+import {
+  AI_PROVIDERS,
+  PROVIDER_STORAGE_KEYS,
+  buildFetchOptions,
+  parseAiResponse,
+} from './lib/ai-providers.js';
+
+// === Navigation constants ===
+const CATEGORIES = {
+  console: { label: 'Console', views: ['logs', 'brief'] },
+  pageintel: { label: 'Page Intel', views: ['seo', 'schema', 'sitemap'] },
+  context: { label: 'Context', views: ['context'] },
+  settings: { label: 'Settings', views: ['settings'] },
 };
 
+const VIEW_LABELS = {
+  logs: 'Main',
+  brief: 'AI Brief',
+  seo: 'SEO Meta',
+  schema: 'Structured Data',
+  sitemap: 'Sitemap',
+  context: 'Context',
+  settings: 'Settings',
+};
+
+const ALL_VIEWS = Object.values(CATEGORIES).flatMap((c) => c.views);
+
+function categoryForView(viewName) {
+  for (const [cat, cfg] of Object.entries(CATEGORIES)) {
+    if (cfg.views.includes(viewName)) return cat;
+  }
+  return 'console';
+}
+
+// === DOM references ===
 const statusEl = document.getElementById('status');
 const aiStatusEl = document.getElementById('aiStatus');
 const previewTextEl = document.getElementById('previewText');
@@ -26,13 +55,21 @@ const optimizeToggle = document.getElementById('optimizeToggle');
 const maxEntriesInput = document.getElementById('maxEntriesInput');
 const maxCharsInput = document.getElementById('maxCharsInput');
 const modelSelect = document.getElementById('modelSelect');
+const modelInput = document.getElementById('modelInput');
 const summaryStyleSelect = document.getElementById('summaryStyleSelect');
 const apiKeyInput = document.getElementById('apiKeyInput');
+const providerSelect = document.getElementById('providerSelect');
+const ollamaUrlInput = document.getElementById('ollamaUrlInput');
+const apiKeySection = document.getElementById('apiKeySection');
+const ollamaUrlSection = document.getElementById('ollamaUrlSection');
+const saveOllamaUrlButton = document.getElementById('saveOllamaUrlButton');
 
 const activeFormatEl = document.getElementById('activeFormat');
 const apiKeyStateEl = document.getElementById('apiKeyState');
 const contextStatusEl = document.getElementById('contextStatus');
 const settingsStatusEl = document.getElementById('settingsStatus');
+
+let currentProvider = 'deepseek';
 
 const statTotalEl = document.getElementById('statTotal');
 const statSelectedEl = document.getElementById('statSelected');
@@ -41,24 +78,35 @@ const statTokensEl = document.getElementById('statTokens');
 const levelPresetButtons = Array.from(
   document.querySelectorAll('[data-level-preset]')
 );
-const panelTabButtons = Array.from(document.querySelectorAll('[data-view]'));
+
+// Navigation DOM
+const categoryButtons = Array.from(
+  document.querySelectorAll('[data-category]')
+);
+const subTabsBar = document.getElementById('subTabsBar');
+
 const viewMap = {
   logs: document.getElementById('logsView'),
   brief: document.getElementById('briefView'),
   context: document.getElementById('contextView'),
+  seo: document.getElementById('seoView'),
+  schema: document.getElementById('schemaView'),
+  sitemap: document.getElementById('sitemapView'),
   settings: document.getElementById('settingsView'),
 };
+
 const CONTEXT_EXTRACTION_MAX_CHARS = 42000;
 
-const SETTINGS_KEY = 'console-copy-helper-settings-v4';
+const SETTINGS_KEY = 'console-copy-helper-settings-v5';
+const OLD_SETTINGS_KEY = 'console-copy-helper-settings-v4';
 const DEFAULT_SETTINGS = {
   activeView: 'logs',
+  activeCategory: 'console',
   format: 'ai',
   levelPreset: 'warnings',
   optimizeForAi: true,
   maxEntries: 500,
   maxCharsPerEntry: 700,
-  model: 'deepseek-chat',
   summaryStyle: 'brief',
 };
 
@@ -177,26 +225,68 @@ function getActiveLevelPreset() {
     : DEFAULT_SETTINGS.levelPreset;
 }
 
+function renderSubTabs(category) {
+  const cfg = CATEGORIES[category];
+  subTabsBar.innerHTML = '';
+  if (!cfg || cfg.views.length <= 1) {
+    subTabsBar.hidden = true;
+    return;
+  }
+  subTabsBar.hidden = false;
+  cfg.views.forEach((view) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'subTab';
+    btn.dataset.view = view;
+    btn.textContent = VIEW_LABELS[view] || view;
+    btn.addEventListener('click', () => {
+      setActiveView(view);
+      saveSettings();
+    });
+    subTabsBar.appendChild(btn);
+  });
+}
+
 function setActiveView(viewName) {
   const nextView = viewMap[viewName] ? viewName : 'logs';
-  panelTabButtons.forEach((button) => {
-    button.classList.toggle('is-active', button.dataset.view === nextView);
+  const cat = categoryForView(nextView);
+
+  // Update category buttons
+  categoryButtons.forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.category === cat);
   });
+
+  // Render sub-tabs for this category
+  renderSubTabs(cat);
+
+  // Highlight the active sub-tab
+  const subTabs = subTabsBar.querySelectorAll('.subTab');
+  subTabs.forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.view === nextView);
+  });
+
+  // Toggle view visibility
   Object.entries(viewMap).forEach(([name, element]) => {
-    element.classList.toggle('is-active', name === nextView);
+    if (element) {
+      element.classList.toggle('is-active', name === nextView);
+    }
   });
 }
 
 function getActiveView() {
-  const activeButton = panelTabButtons.find((button) =>
-    button.classList.contains('is-active')
-  );
-  return activeButton ? activeButton.dataset.view : 'logs';
+  for (const [name, element] of Object.entries(viewMap)) {
+    if (element && element.classList.contains('is-active')) {
+      return name;
+    }
+  }
+  return 'logs';
 }
 
 function readSettingsFromUi() {
+  const view = getActiveView();
   return {
-    activeView: getActiveView(),
+    activeView: view,
+    activeCategory: categoryForView(view),
     format: formatSelect.value,
     levelPreset: getActiveLevelPreset(),
     optimizeForAi: optimizeToggle.checked,
@@ -212,7 +302,6 @@ function readSettingsFromUi() {
       3000,
       DEFAULT_SETTINGS.maxCharsPerEntry
     ),
-    model: modelSelect.value || DEFAULT_SETTINGS.model,
     summaryStyle: summaryStyleSelect.value || DEFAULT_SETTINGS.summaryStyle,
   };
 }
@@ -224,23 +313,31 @@ function writeSettingsToUi(settings) {
   optimizeToggle.checked = settings.optimizeForAi;
   maxEntriesInput.value = String(settings.maxEntries);
   maxCharsInput.value = String(settings.maxCharsPerEntry);
-  modelSelect.value = settings.model;
   summaryStyleSelect.value = settings.summaryStyle;
 }
 
 function normalizeSettings(parsed) {
-  const requestedActiveView =
-    parsed && typeof parsed.activeView === 'string'
-      ? parsed.activeView === 'labs'
-        ? 'context'
-        : parsed.activeView
+  let requestedActiveView =
+    parsed && typeof parsed.activeView === 'string' ? parsed.activeView : '';
+
+  // Migrate old view names
+  if (requestedActiveView === 'labs') requestedActiveView = 'context';
+
+  const activeView = ALL_VIEWS.includes(requestedActiveView)
+    ? requestedActiveView
+    : DEFAULT_SETTINGS.activeView;
+
+  const requestedCategory =
+    parsed && typeof parsed.activeCategory === 'string'
+      ? parsed.activeCategory
       : '';
+  const activeCategory = CATEGORIES[requestedCategory]
+    ? requestedCategory
+    : categoryForView(activeView);
 
   return {
-    activeView:
-      ['logs', 'brief', 'context', 'settings'].includes(requestedActiveView)
-        ? requestedActiveView
-        : DEFAULT_SETTINGS.activeView,
+    activeView,
+    activeCategory,
     format:
       parsed &&
       typeof parsed.format === 'string' &&
@@ -269,12 +366,6 @@ function normalizeSettings(parsed) {
       3000,
       DEFAULT_SETTINGS.maxCharsPerEntry
     ),
-    model:
-      parsed &&
-      typeof parsed.model === 'string' &&
-      ['deepseek-chat', 'deepseek-reasoner'].includes(parsed.model)
-        ? parsed.model
-        : DEFAULT_SETTINGS.model,
     summaryStyle:
       parsed &&
       typeof parsed.summaryStyle === 'string' &&
@@ -286,7 +377,15 @@ function normalizeSettings(parsed) {
 
 function loadSettings() {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
+    let raw = localStorage.getItem(SETTINGS_KEY);
+    // Migrate from v4 if v5 not found
+    if (!raw) {
+      const oldRaw = localStorage.getItem(OLD_SETTINGS_KEY);
+      if (oldRaw) {
+        raw = oldRaw;
+        localStorage.removeItem(OLD_SETTINGS_KEY);
+      }
+    }
     if (!raw) {
       writeSettingsToUi(DEFAULT_SETTINGS);
       return;
@@ -334,7 +433,13 @@ function renderPreview(text) {
 }
 
 function setApiKeyState(configured) {
-  if (configured) {
+  const providerConfig = AI_PROVIDERS[currentProvider];
+  const label = providerConfig ? providerConfig.label : currentProvider;
+  if (currentProvider === 'ollama') {
+    apiKeyStateEl.textContent = 'No key needed';
+    apiKeyStateEl.classList.remove('stateWarn');
+    apiKeyStateEl.classList.add('stateOk');
+  } else if (configured) {
     apiKeyStateEl.textContent = 'Key configured';
     apiKeyStateEl.classList.remove('stateWarn');
     apiKeyStateEl.classList.add('stateOk');
@@ -343,64 +448,208 @@ function setApiKeyState(configured) {
     apiKeyStateEl.textContent = 'Key missing';
     apiKeyStateEl.classList.remove('stateOk');
     apiKeyStateEl.classList.add('stateWarn');
-    apiKeyInput.placeholder = 'Paste DeepSeek API key';
+    apiKeyInput.placeholder = `Paste ${label} API key`;
   }
 }
 
-async function getDeepSeekLocalConfig() {
-  const stored = await chrome.storage.local.get([
-    DEEPSEEK_STORAGE_KEYS.apiKey,
-    DEEPSEEK_STORAGE_KEYS.model,
-  ]);
-  const apiKey =
-    typeof stored[DEEPSEEK_STORAGE_KEYS.apiKey] === 'string'
-      ? stored[DEEPSEEK_STORAGE_KEYS.apiKey]
-      : '';
-  const model =
-    typeof stored[DEEPSEEK_STORAGE_KEYS.model] === 'string'
-      ? stored[DEEPSEEK_STORAGE_KEYS.model]
-      : DEFAULT_SETTINGS.model;
-  return { apiKey, model };
+function populateModelSelect(provider) {
+  const config = AI_PROVIDERS[provider];
+  if (!config) return;
+  modelSelect.innerHTML = '';
+  if (config.models.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '(use custom model input)';
+    modelSelect.appendChild(opt);
+    modelSelect.disabled = true;
+  } else {
+    config.models.forEach((m) => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      modelSelect.appendChild(opt);
+    });
+    modelSelect.disabled = false;
+  }
+  modelSelect.value = config.defaultModel;
 }
 
-async function saveDeepSeekLocalConfig({ apiKey, model }) {
+function updateProviderUi(provider) {
+  const isOllama = provider === 'ollama';
+  const usesCustomModel = AI_PROVIDERS[provider]?.models.length === 0;
+  apiKeySection.style.display = isOllama ? 'none' : '';
+  ollamaUrlSection.style.display = isOllama ? '' : 'none';
+  modelInput.style.display = usesCustomModel ? '' : 'none';
+  if (usesCustomModel) {
+    modelInput.placeholder =
+      provider === 'ollama' ? 'e.g. llama3.1:8b' : 'Enter model name';
+  }
+  populateModelSelect(provider);
+}
+
+function getSelectedModel(fallbackModel = '') {
+  const providerConfig = AI_PROVIDERS[currentProvider];
+  const usesCustomModel =
+    providerConfig && providerConfig.models.length === 0;
+
+  if (usesCustomModel) {
+    const typed = (modelInput.value || '').trim();
+    if (typed) {
+      return typed;
+    }
+  }
+
+  const picked = (modelSelect.value || '').trim();
+  if (picked) {
+    return picked;
+  }
+
+  return (
+    (fallbackModel || '').trim() ||
+    providerConfig?.defaultModel ||
+    ''
+  );
+}
+
+async function getProviderLocalConfig(provider) {
+  const p = provider || currentProvider;
+  const config = AI_PROVIDERS[p];
+  if (!config) throw new Error(`Unknown provider: ${p}`);
+
+  const keyField = PROVIDER_STORAGE_KEYS[`${p}_apiKey`];
+  const modelField = PROVIDER_STORAGE_KEYS[`${p}_model`];
+  const baseUrlField = PROVIDER_STORAGE_KEYS[`${p}_baseUrl`];
+
+  const keys = [keyField, modelField, baseUrlField].filter(Boolean);
+  const stored = await chrome.storage.local.get(keys);
+
+  return {
+    provider: p,
+    apiKey: keyField ? (stored[keyField] || '') : '',
+    model: modelField ? (stored[modelField] || config.defaultModel) : config.defaultModel,
+    baseUrl: baseUrlField ? (stored[baseUrlField] || '') : '',
+  };
+}
+
+async function saveProviderLocalConfig({ provider, apiKey, model, baseUrl }) {
+  const p = provider || currentProvider;
   const updates = {};
+
   if (typeof apiKey === 'string') {
     const nextKey = apiKey.trim();
-    if (!nextKey) {
-      throw new Error('API key is empty.');
-    }
-    updates[DEEPSEEK_STORAGE_KEYS.apiKey] = nextKey;
+    if (!nextKey) throw new Error('API key is empty.');
+    const keyField = PROVIDER_STORAGE_KEYS[`${p}_apiKey`];
+    if (keyField) updates[keyField] = nextKey;
   }
+
   if (typeof model === 'string' && model.trim()) {
-    updates[DEEPSEEK_STORAGE_KEYS.model] = model.trim();
+    const modelField = PROVIDER_STORAGE_KEYS[`${p}_model`];
+    if (modelField) updates[modelField] = model.trim();
   }
+
+  if (typeof baseUrl === 'string') {
+    const baseUrlField = PROVIDER_STORAGE_KEYS[`${p}_baseUrl`];
+    if (baseUrlField) updates[baseUrlField] = baseUrl.trim();
+  }
+
   if (Object.keys(updates).length > 0) {
     await chrome.storage.local.set(updates);
   }
-  return getDeepSeekLocalConfig();
+  return getProviderLocalConfig(p);
 }
 
-async function clearDeepSeekLocalKey() {
-  await chrome.storage.local.remove(DEEPSEEK_STORAGE_KEYS.apiKey);
-  return getDeepSeekLocalConfig();
+async function clearProviderLocalKey(provider) {
+  const p = provider || currentProvider;
+  const keyField = PROVIDER_STORAGE_KEYS[`${p}_apiKey`];
+  if (keyField) {
+    await chrome.storage.local.remove(keyField);
+  }
+  return getProviderLocalConfig(p);
 }
 
-async function loadDeepSeekConfig() {
+async function setActiveProviderInStorage(provider) {
+  if (!AI_PROVIDERS[provider]) throw new Error(`Unknown provider: ${provider}`);
+  await chrome.storage.local.set({
+    [PROVIDER_STORAGE_KEYS.activeProvider]: provider,
+  });
+}
+
+async function loadAiConfig() {
   try {
-    const config = await getDeepSeekLocalConfig();
+    // Get active provider
+    const stored = await chrome.storage.local.get([
+      PROVIDER_STORAGE_KEYS.activeProvider,
+    ]);
+    const activeProvider = stored[PROVIDER_STORAGE_KEYS.activeProvider];
+    currentProvider =
+      typeof activeProvider === 'string' && AI_PROVIDERS[activeProvider]
+        ? activeProvider
+        : 'deepseek';
+
+    providerSelect.value = currentProvider;
+    updateProviderUi(currentProvider);
+
+    const config = await getProviderLocalConfig(currentProvider);
     setApiKeyState(Boolean(config.apiKey));
-    if (
-      config.model &&
-      ['deepseek-chat', 'deepseek-reasoner'].includes(config.model)
-    ) {
-      modelSelect.value = config.model;
-      saveSettings();
+
+    // Set model if saved
+    if (config.model) {
+      if (modelSelect.disabled) {
+        modelInput.value = config.model;
+      } else {
+        const options = Array.from(modelSelect.options).map((o) => o.value);
+        if (options.includes(config.model)) {
+          modelSelect.value = config.model;
+        }
+      }
+    } else if (modelSelect.disabled) {
+      modelInput.value = '';
     }
+
+    if (!modelSelect.disabled) {
+      const providerDefault = AI_PROVIDERS[currentProvider]?.defaultModel || '';
+      if (!modelSelect.value && providerDefault) {
+        modelSelect.value = providerDefault;
+      }
+    } else if (!modelInput.value) {
+      const providerDefault = AI_PROVIDERS[currentProvider]?.defaultModel || '';
+      if (providerDefault) {
+        modelInput.value = providerDefault;
+      }
+    }
+
+    // Set Ollama URL if applicable
+    if (currentProvider === 'ollama' && config.baseUrl) {
+      ollamaUrlInput.value = config.baseUrl;
+    }
+
     setSettingsStatus('Settings status: ready', 'success');
   } catch (error) {
     setApiKeyState(false);
     setSettingsStatus(`Settings status: ${error.message}`, 'error');
+  }
+}
+
+async function switchProvider(provider) {
+  currentProvider = provider;
+  await setActiveProviderInStorage(provider);
+  updateProviderUi(provider);
+  const config = await getProviderLocalConfig(provider);
+  setApiKeyState(Boolean(config.apiKey));
+  if (config.model) {
+    if (modelSelect.disabled) {
+      modelInput.value = config.model;
+    } else {
+      const options = Array.from(modelSelect.options).map((o) => o.value);
+      if (options.includes(config.model)) {
+        modelSelect.value = config.model;
+      }
+    }
+  } else if (modelSelect.disabled) {
+    modelInput.value = '';
+  }
+  if (provider === 'ollama' && config.baseUrl) {
+    ollamaUrlInput.value = config.baseUrl;
   }
 }
 
@@ -692,38 +941,36 @@ function buildContextCondenseUserPrompt({ pageUrl, contextText }) {
   ].join('\n');
 }
 
-async function condenseContextViaDirectDeepSeek({
+async function condenseContextViaDirectProvider({
+  provider,
   apiKey,
   model,
+  baseUrl,
   contextText,
   pageUrl,
 }) {
   const payload = trimToMaxChars(redactSensitiveText(contextText), 12000);
-  const body = {
-    model,
-    temperature: 0.2,
-    max_tokens: 700,
-    messages: [
-      {
-        role: 'system',
-        content: buildContextCondenseSystemPrompt(),
-      },
-      {
-        role: 'user',
-        content: buildContextCondenseUserPrompt({
-          pageUrl,
-          contextText: payload,
-        }),
-      },
-    ],
-  };
+  const systemPrompt = buildContextCondenseSystemPrompt();
+  const userPrompt = buildContextCondenseUserPrompt({
+    pageUrl,
+    contextText: payload,
+  });
 
-  const response = await fetch(DEEPSEEK_ENDPOINT, {
+  const { endpoint, headers, body } = buildFetchOptions({
+    provider,
+    apiKey,
+    model,
+    systemPrompt,
+    userPrompt,
+    baseUrl,
+    maxTokens: 700,
+  });
+
+  const providerLabel = AI_PROVIDERS[provider]?.label || provider;
+
+  const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -738,25 +985,25 @@ async function condenseContextViaDirectDeepSeek({
         reason = raw.slice(0, 300);
       }
     }
-    throw new Error(`DeepSeek request failed: ${reason}`);
+    throw new Error(`${providerLabel} request failed: ${reason}`);
   }
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error('DeepSeek returned non-JSON response.', { cause: error });
+    throw new Error(`${providerLabel} returned non-JSON response.`, { cause: error });
   }
 
-  const summary = parsed?.choices?.[0]?.message?.content;
+  const { summary, usage, model: respModel } = parseAiResponse(provider, parsed);
   if (!summary || typeof summary !== 'string') {
-    throw new Error('DeepSeek response missing summary.');
+    throw new Error(`${providerLabel} response missing summary.`);
   }
 
   return {
     summary,
-    usage: parsed.usage || null,
-    model: parsed.model || model,
+    usage: usage || null,
+    model: respModel || model,
   };
 }
 
@@ -778,10 +1025,10 @@ async function condensePageContextWithAi() {
     contextPayload = generated.trim();
   }
 
-  const config = await getDeepSeekLocalConfig();
-  if (!config.apiKey) {
+  const config = await getProviderLocalConfig(currentProvider);
+  if (AI_PROVIDERS[currentProvider]?.authType !== 'none' && !config.apiKey) {
     setApiKeyState(false);
-    setContextStatus('Save DeepSeek key in Settings tab first.', 'error');
+    setContextStatus('Save API key in Settings tab first.', 'error');
     return;
   }
 
@@ -789,9 +1036,11 @@ async function condensePageContextWithAi() {
   setContextStatus('Condensing context with AI...');
 
   try {
-    const result = await condenseContextViaDirectDeepSeek({
+    const result = await condenseContextViaDirectProvider({
+      provider: currentProvider,
       apiKey: config.apiKey,
-      model: readSettingsFromUi().model,
+      model: getSelectedModel(config.model),
+      baseUrl: config.baseUrl,
       contextText: contextPayload,
       pageUrl: lastGeneratedContextPageUrl || lastReport?.pageUrl || '',
     });
@@ -847,6 +1096,647 @@ async function copyPageContext() {
     }
   } catch (error) {
     setContextStatus(`Copy failed: ${error.message}`, 'error');
+  }
+}
+
+// === SEO Panel Logic ===
+
+const seoStatusEl = document.getElementById('seoStatus');
+const scanSeoButton = document.getElementById('scanSeoButton');
+const copySeoButton = document.getElementById('copySeoButton');
+const seoResultsEl = document.getElementById('seoResults');
+
+let lastSeoReport = null;
+
+function setSeoStatus(message, type = '') {
+  seoStatusEl.textContent = message;
+  seoStatusEl.classList.remove('success', 'error');
+  if (type) seoStatusEl.classList.add(type);
+}
+
+async function sendSeoRequest(tabId) {
+  return withTimeout(
+    chrome.tabs.sendMessage(tabId, { type: 'GET_SEO_META' }),
+    8000
+  );
+}
+
+function createSeoItem(label, value, status, charInfo) {
+  const row = document.createElement('div');
+  row.className = 'seoItem';
+
+  const dot = document.createElement('span');
+  dot.className = `seoIndicator ${status || 'info'}`;
+  row.appendChild(dot);
+
+  const labelEl = document.createElement('span');
+  labelEl.className = 'seoLabel';
+  labelEl.textContent = label;
+  row.appendChild(labelEl);
+
+  const valueEl = document.createElement('span');
+  valueEl.className = 'seoValue';
+  valueEl.textContent = value || '(not set)';
+  row.appendChild(valueEl);
+
+  if (charInfo) {
+    const countEl = document.createElement('span');
+    countEl.className = 'seoCharCount';
+    countEl.textContent = charInfo;
+    row.appendChild(countEl);
+  }
+
+  return row;
+}
+
+function createSeoSection(title) {
+  const section = document.createElement('div');
+  section.className = 'seoSection';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  section.appendChild(h);
+  return section;
+}
+
+function renderSeoResults(data) {
+  seoResultsEl.innerHTML = '';
+
+  // Basic SEO
+  const basic = createSeoSection('Basic SEO');
+  basic.appendChild(
+    createSeoItem('Title', data.title.value, data.title.status, `${data.title.length} chars`)
+  );
+  basic.appendChild(
+    createSeoItem(
+      'Description',
+      data.metaDescription.value,
+      data.metaDescription.status,
+      `${data.metaDescription.length} chars`
+    )
+  );
+  basic.appendChild(createSeoItem('Canonical', data.canonical, data.canonical ? 'pass' : 'warn'));
+  basic.appendChild(createSeoItem('Robots', data.robots, 'info'));
+  basic.appendChild(createSeoItem('Viewport', data.viewport, data.viewport ? 'pass' : 'warn'));
+  seoResultsEl.appendChild(basic);
+
+  // Open Graph
+  const ogSection = createSeoSection('Open Graph');
+  const ogFields = ['title', 'description', 'image', 'url', 'type', 'siteName'];
+  ogFields.forEach((field) => {
+    ogSection.appendChild(
+      createSeoItem(`og:${field}`, data.og[field], data.og[field] ? 'pass' : 'warn')
+    );
+  });
+  seoResultsEl.appendChild(ogSection);
+
+  // Twitter Card
+  const twSection = createSeoSection('Twitter Card');
+  const twFields = ['card', 'title', 'description', 'image', 'creator', 'site'];
+  twFields.forEach((field) => {
+    twSection.appendChild(
+      createSeoItem(`twitter:${field}`, data.twitter[field], data.twitter[field] ? 'pass' : 'info')
+    );
+  });
+  seoResultsEl.appendChild(twSection);
+
+  // Headings
+  const headSection = createSeoSection('Headings');
+  headSection.appendChild(
+    createSeoItem('H1 count', String(data.headings.h1Count), data.headings.status)
+  );
+  if (data.headings.issues.length > 0) {
+    data.headings.issues.forEach((issue) => {
+      headSection.appendChild(createSeoItem('Issue', issue, 'warn'));
+    });
+  }
+  data.headings.hierarchy.slice(0, 10).forEach((h) => {
+    headSection.appendChild(createSeoItem(`H${h.level}`, h.text, 'info'));
+  });
+  seoResultsEl.appendChild(headSection);
+
+  // Images
+  const imgSection = createSeoSection('Images');
+  imgSection.appendChild(
+    createSeoItem('Total images', String(data.images.total), 'info')
+  );
+  imgSection.appendChild(
+    createSeoItem('With alt text', String(data.images.withAlt), data.images.status)
+  );
+  imgSection.appendChild(
+    createSeoItem('Missing alt', String(data.images.withoutAlt), data.images.withoutAlt > 0 ? 'warn' : 'pass')
+  );
+  imgSection.appendChild(
+    createSeoItem('Coverage', `${data.images.coverage}%`, data.images.status)
+  );
+  seoResultsEl.appendChild(imgSection);
+
+  // Hreflang
+  if (data.hreflang.length > 0) {
+    const hlSection = createSeoSection('Hreflang');
+    data.hreflang.forEach((hl) => {
+      hlSection.appendChild(createSeoItem(hl.lang, hl.href, 'info'));
+    });
+    seoResultsEl.appendChild(hlSection);
+  }
+}
+
+function buildSeoTextReport(data) {
+  const lines = ['=== SEO & Meta Report ===', ''];
+  lines.push(`Title: ${data.title.value} (${data.title.length} chars) [${data.title.status}]`);
+  lines.push(`Description: ${data.metaDescription.value} (${data.metaDescription.length} chars) [${data.metaDescription.status}]`);
+  lines.push(`Canonical: ${data.canonical || '(not set)'}`);
+  lines.push(`Robots: ${data.robots || '(not set)'}`);
+  lines.push(`Viewport: ${data.viewport || '(not set)'}`);
+  lines.push('');
+  lines.push('--- Open Graph ---');
+  for (const [k, v] of Object.entries(data.og)) {
+    lines.push(`og:${k}: ${v || '(not set)'}`);
+  }
+  lines.push('');
+  lines.push('--- Twitter Card ---');
+  for (const [k, v] of Object.entries(data.twitter)) {
+    lines.push(`twitter:${k}: ${v || '(not set)'}`);
+  }
+  lines.push('');
+  lines.push('--- Headings ---');
+  lines.push(`H1 count: ${data.headings.h1Count}`);
+  data.headings.issues.forEach((issue) => lines.push(`  Issue: ${issue}`));
+  data.headings.hierarchy.slice(0, 15).forEach((h) => {
+    lines.push(`  H${h.level}: ${h.text}`);
+  });
+  lines.push('');
+  lines.push('--- Images ---');
+  lines.push(`Total: ${data.images.total}, With alt: ${data.images.withAlt}, Missing: ${data.images.withoutAlt}, Coverage: ${data.images.coverage}%`);
+  if (data.hreflang.length > 0) {
+    lines.push('');
+    lines.push('--- Hreflang ---');
+    data.hreflang.forEach((hl) => lines.push(`${hl.lang}: ${hl.href}`));
+  }
+  return lines.join('\n');
+}
+
+async function scanSeoMeta() {
+  scanSeoButton.disabled = true;
+  setSeoStatus('Scanning page...');
+  try {
+    const activeTab = await getActiveTabOrThrow();
+    let response;
+    try {
+      response = await sendSeoRequest(activeTab.id);
+    } catch (error) {
+      if (!isNoReceiverError(error)) throw error;
+      await ensureContentScriptLoaded(activeTab.id);
+      response = await sendSeoRequest(activeTab.id);
+    }
+    if (!response || !response.ok) {
+      throw new Error('SEO scan failed. Reload the page and try again.');
+    }
+    lastSeoReport = response.data;
+    renderSeoResults(response.data);
+    setSeoStatus('SEO scan complete.', 'success');
+  } catch (error) {
+    setSeoStatus(`Scan failed: ${error.message}`, 'error');
+  } finally {
+    scanSeoButton.disabled = false;
+  }
+}
+
+async function copySeoReport() {
+  if (!lastSeoReport) {
+    setSeoStatus('No scan yet. Scanning now...');
+    await scanSeoMeta();
+    if (!lastSeoReport) return;
+  }
+  try {
+    await navigator.clipboard.writeText(buildSeoTextReport(lastSeoReport));
+    setSeoStatus('SEO report copied to clipboard.', 'success');
+  } catch (error) {
+    setSeoStatus(`Copy failed: ${error.message}`, 'error');
+  }
+}
+
+// === Schema Panel Logic ===
+
+const schemaStatusEl = document.getElementById('schemaStatus');
+const scanSchemaButton = document.getElementById('scanSchemaButton');
+const testRichResultsButton = document.getElementById('testRichResultsButton');
+const copySchemaButton = document.getElementById('copySchemaButton');
+const schemaResultsEl = document.getElementById('schemaResults');
+const schemaStatsEl = document.getElementById('schemaStats');
+
+let lastSchemaReport = null;
+
+function setSchemaStatus(message, type = '') {
+  schemaStatusEl.textContent = message;
+  schemaStatusEl.classList.remove('success', 'error');
+  if (type) schemaStatusEl.classList.add(type);
+}
+
+async function sendSchemaRequest(tabId) {
+  return withTimeout(
+    chrome.tabs.sendMessage(tabId, { type: 'GET_STRUCTURED_DATA' }),
+    8000
+  );
+}
+
+function renderSchemaResults(data) {
+  schemaResultsEl.innerHTML = '';
+  schemaStatsEl.style.display = '';
+
+  document.getElementById('schemaStatTypes').textContent = String(data.stats.typesFound);
+  document.getElementById('schemaStatJsonLd').textContent = String(data.stats.jsonLdCount);
+  document.getElementById('schemaStatMicrodata').textContent = String(data.stats.microdataCount);
+  document.getElementById('schemaStatWarnings').textContent = String(data.stats.validationWarnings);
+
+  if (data.jsonLd.length === 0 && data.microdata.length === 0 && data.rdfa.length === 0) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = 'No structured data found on this page.';
+    schemaResultsEl.appendChild(hint);
+    return;
+  }
+
+  // JSON-LD items
+  data.jsonLd.forEach((item) => {
+    const card = createSchemaCard(`JSON-LD: ${item.type}`, item.raw, item.errors, item.warnings);
+    schemaResultsEl.appendChild(card);
+  });
+
+  // Microdata items
+  data.microdata.forEach((item) => {
+    const card = createSchemaCard(
+      `Microdata: ${item.type}`,
+      item.properties,
+      [],
+      []
+    );
+    schemaResultsEl.appendChild(card);
+  });
+
+  // RDFa items
+  data.rdfa.forEach((item) => {
+    const card = createSchemaCard(
+      `RDFa: ${item.type || item.about}`,
+      item.properties,
+      [],
+      []
+    );
+    schemaResultsEl.appendChild(card);
+  });
+}
+
+function createSchemaCard(title, data, errors, warnings) {
+  const card = document.createElement('div');
+  card.className = 'schemaItem';
+
+  const head = document.createElement('div');
+  head.className = 'schemaItemHead';
+
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = title;
+  head.appendChild(titleSpan);
+
+  const badges = document.createElement('span');
+  badges.className = 'schemaBadges';
+  if (errors && errors.length > 0) {
+    const errBadge = document.createElement('span');
+    errBadge.className = 'schemaBadge errors';
+    errBadge.textContent = `${errors.length} err`;
+    badges.appendChild(errBadge);
+  }
+  if (warnings && warnings.length > 0) {
+    const warnBadge = document.createElement('span');
+    warnBadge.className = 'schemaBadge warnings';
+    warnBadge.textContent = `${warnings.length} warn`;
+    badges.appendChild(warnBadge);
+  }
+  head.appendChild(badges);
+
+  const body = document.createElement('div');
+  body.className = 'schemaItemBody';
+  body.textContent = data ? JSON.stringify(data, null, 2) : '(parse error)';
+
+  // Validation messages
+  const valDiv = document.createElement('div');
+  valDiv.className = 'schemaValidation';
+  if (errors) {
+    errors.forEach((err) => {
+      const p = document.createElement('p');
+      p.className = 'schemaError';
+      p.textContent = err;
+      valDiv.appendChild(p);
+    });
+  }
+  if (warnings) {
+    warnings.forEach((warn) => {
+      const p = document.createElement('p');
+      p.className = 'schemaWarning';
+      p.textContent = warn;
+      valDiv.appendChild(p);
+    });
+  }
+
+  head.addEventListener('click', () => {
+    body.classList.toggle('is-open');
+  });
+
+  card.appendChild(head);
+  if (valDiv.children.length > 0) card.appendChild(valDiv);
+  card.appendChild(body);
+  return card;
+}
+
+async function scanStructuredData() {
+  scanSchemaButton.disabled = true;
+  setSchemaStatus('Scanning page...');
+  try {
+    const activeTab = await getActiveTabOrThrow();
+    let response;
+    try {
+      response = await sendSchemaRequest(activeTab.id);
+    } catch (error) {
+      if (!isNoReceiverError(error)) throw error;
+      await ensureContentScriptLoaded(activeTab.id);
+      response = await sendSchemaRequest(activeTab.id);
+    }
+    if (!response || !response.ok) {
+      throw new Error('Schema scan failed. Reload the page and try again.');
+    }
+    lastSchemaReport = response.data;
+    renderSchemaResults(response.data);
+    setSchemaStatus(
+      `Found ${response.data.stats.typesFound} type(s), ${response.data.stats.validationWarnings} issue(s).`,
+      'success'
+    );
+  } catch (error) {
+    setSchemaStatus(`Scan failed: ${error.message}`, 'error');
+  } finally {
+    scanSchemaButton.disabled = false;
+  }
+}
+
+async function openRichResultsTest() {
+  try {
+    const activeTab = await getActiveTabOrThrow();
+    const testUrl = `https://search.google.com/test/rich-results?url=${encodeURIComponent(activeTab.url)}`;
+    chrome.tabs.create({ url: testUrl });
+  } catch (error) {
+    setSchemaStatus(`Could not open test: ${error.message}`, 'error');
+  }
+}
+
+async function copySchemaData() {
+  if (!lastSchemaReport) {
+    setSchemaStatus('No scan yet. Scanning now...');
+    await scanStructuredData();
+    if (!lastSchemaReport) return;
+  }
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(lastSchemaReport, null, 2));
+    setSchemaStatus('Structured data copied to clipboard.', 'success');
+  } catch (error) {
+    setSchemaStatus(`Copy failed: ${error.message}`, 'error');
+  }
+}
+
+// === Sitemap Panel Logic ===
+
+const sitemapStatusEl = document.getElementById('sitemapStatus');
+const fetchSitemapButton = document.getElementById('fetchSitemapButton');
+const copySitemapUrlsButton = document.getElementById('copySitemapUrlsButton');
+const sitemapUrlInputEl = document.getElementById('sitemapUrlInput');
+const sitemapSearchInputEl = document.getElementById('sitemapSearchInput');
+const sitemapPatternInputEl = document.getElementById('sitemapPatternInput');
+const sitemapFiltersEl = document.getElementById('sitemapFilters');
+const sitemapStatsEl = document.getElementById('sitemapStats');
+const sitemapResultsEl = document.getElementById('sitemapResults');
+
+let sitemapAllUrls = [];
+let sitemapRenderOffset = 0;
+const SITEMAP_PAGE_SIZE = 200;
+
+function setSitemapStatus(message, type = '') {
+  sitemapStatusEl.textContent = message;
+  sitemapStatusEl.classList.remove('success', 'error');
+  if (type) sitemapStatusEl.classList.add(type);
+}
+
+function parseSitemapXml(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'text/xml');
+  if (doc.querySelector('parsererror')) {
+    throw new Error('Failed to parse sitemap XML.');
+  }
+
+  // Check for sitemap index
+  const indexLocs = doc.querySelectorAll('sitemapindex > sitemap > loc');
+  if (indexLocs.length > 0) {
+    return {
+      type: 'index',
+      sitemaps: Array.from(indexLocs).map((loc) => loc.textContent.trim()),
+    };
+  }
+
+  // Regular sitemap
+  const urlEntries = doc.querySelectorAll('urlset > url');
+  return {
+    type: 'urlset',
+    urls: Array.from(urlEntries).map((urlEl) => ({
+      loc: urlEl.querySelector('loc')?.textContent?.trim() || '',
+      lastmod: urlEl.querySelector('lastmod')?.textContent?.trim() || '',
+      changefreq: urlEl.querySelector('changefreq')?.textContent?.trim() || '',
+      priority: urlEl.querySelector('priority')?.textContent?.trim() || '',
+    })),
+  };
+}
+
+function getFilteredSitemapUrls() {
+  const searchTerm = (sitemapSearchInputEl?.value || '').toLowerCase().trim();
+  const pattern = (sitemapPatternInputEl?.value || '').trim();
+  let pathRegex = null;
+
+  if (pattern) {
+    const escapedPattern = pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\\\*/g, '.*')
+      .replace(/\\\?/g, '.');
+    pathRegex = new RegExp(`^${escapedPattern}$`);
+  }
+
+  return sitemapAllUrls.filter((entry) => {
+    if (searchTerm && !entry.loc.toLowerCase().includes(searchTerm)) return false;
+    if (pathRegex) {
+      try {
+        const path = new URL(entry.loc).pathname;
+        if (!pathRegex.test(path)) return false;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function renderSitemapUrls(filtered) {
+  sitemapResultsEl.innerHTML = '';
+  const toShow = filtered.slice(0, sitemapRenderOffset + SITEMAP_PAGE_SIZE);
+  sitemapRenderOffset = toShow.length;
+
+  toShow.forEach((entry) => {
+    const row = document.createElement('div');
+    row.className = 'sitemapUrlItem';
+    row.textContent = entry.loc;
+    if (entry.lastmod || entry.priority) {
+      const meta = document.createElement('div');
+      meta.className = 'sitemapMeta';
+      const parts = [];
+      if (entry.lastmod) parts.push(entry.lastmod);
+      if (entry.changefreq) parts.push(entry.changefreq);
+      if (entry.priority) parts.push(`p:${entry.priority}`);
+      meta.textContent = parts.join(' • ');
+      row.appendChild(meta);
+    }
+    sitemapResultsEl.appendChild(row);
+  });
+
+  if (toShow.length < filtered.length) {
+    const more = document.createElement('div');
+    more.className = 'sitemapLoadMore';
+    const btn = document.createElement('button');
+    btn.className = 'miniBtn';
+    btn.type = 'button';
+    btn.textContent = `Show more (${filtered.length - toShow.length} remaining)`;
+    btn.addEventListener('click', () => {
+      renderSitemapUrls(filtered);
+    });
+    more.appendChild(btn);
+    sitemapResultsEl.appendChild(more);
+  }
+}
+
+function updateSitemapStats(filtered) {
+  sitemapStatsEl.style.display = '';
+  document.getElementById('sitemapStatTotal').textContent = String(sitemapAllUrls.length);
+  document.getElementById('sitemapStatFiltered').textContent = String(filtered.length);
+
+  const domains = new Set();
+  sitemapAllUrls.forEach((entry) => {
+    try { domains.add(new URL(entry.loc).hostname); } catch { /* ignore */ }
+  });
+  document.getElementById('sitemapStatDomains').textContent = String(domains.size);
+
+  const dates = sitemapAllUrls
+    .map((e) => e.lastmod)
+    .filter(Boolean)
+    .sort();
+  if (dates.length > 0) {
+    const first = dates[0].slice(0, 10);
+    const last = dates[dates.length - 1].slice(0, 10);
+    document.getElementById('sitemapStatDates').textContent =
+      first === last ? first : `${first} → ${last}`;
+  } else {
+    document.getElementById('sitemapStatDates').textContent = '-';
+  }
+}
+
+function refreshSitemapDisplay() {
+  sitemapRenderOffset = 0;
+  const filtered = getFilteredSitemapUrls();
+  updateSitemapStats(filtered);
+  renderSitemapUrls(filtered);
+}
+
+async function fetchSitemapFromBackground(url) {
+  return sendBackgroundMessage({ type: 'FETCH_SITEMAP', url });
+}
+
+async function fetchSitemap() {
+  fetchSitemapButton.disabled = true;
+  setSitemapStatus('Fetching sitemap...');
+
+  try {
+    let sitemapUrl = sitemapUrlInputEl.value.trim();
+
+    // Auto-detect if no URL provided
+    if (!sitemapUrl) {
+      const activeTab = await getActiveTabOrThrow();
+      const origin = new URL(activeTab.url).origin;
+
+      // Try /sitemap.xml
+      try {
+        const resp = await fetchSitemapFromBackground(`${origin}/sitemap.xml`);
+        if (resp && resp.ok && resp.xml) {
+          sitemapUrl = `${origin}/sitemap.xml`;
+          sitemapUrlInputEl.value = sitemapUrl;
+        }
+      } catch { /* fallback */ }
+
+      // Try robots.txt
+      if (!sitemapUrl) {
+        try {
+          const resp = await fetchSitemapFromBackground(`${origin}/robots.txt`);
+          if (resp && resp.ok && resp.xml) {
+            const match = resp.xml.match(/^Sitemap:\s*(.+)$/im);
+            if (match) {
+              sitemapUrl = match[1].trim();
+              sitemapUrlInputEl.value = sitemapUrl;
+            }
+          }
+        } catch { /* no robots.txt */ }
+      }
+
+      if (!sitemapUrl) {
+        throw new Error('No sitemap found. Enter a URL manually.');
+      }
+    }
+
+    const resp = await fetchSitemapFromBackground(sitemapUrl);
+    if (!resp || !resp.ok || !resp.xml) {
+      throw new Error('Could not fetch sitemap.');
+    }
+
+    const parsed = parseSitemapXml(resp.xml);
+
+    if (parsed.type === 'index') {
+      // Load all sub-sitemaps
+      setSitemapStatus(`Sitemap index with ${parsed.sitemaps.length} sitemaps. Loading...`);
+      sitemapAllUrls = [];
+      for (const subUrl of parsed.sitemaps) {
+        try {
+          const subResp = await fetchSitemapFromBackground(subUrl);
+          if (subResp && subResp.ok && subResp.xml) {
+            const subParsed = parseSitemapXml(subResp.xml);
+            if (subParsed.type === 'urlset') {
+              sitemapAllUrls = sitemapAllUrls.concat(subParsed.urls);
+            }
+          }
+        } catch { /* skip failed sub-sitemaps */ }
+      }
+    } else {
+      sitemapAllUrls = parsed.urls;
+    }
+
+    sitemapFiltersEl.style.display = '';
+    refreshSitemapDisplay();
+    setSitemapStatus(`Loaded ${sitemapAllUrls.length} URLs.`, 'success');
+  } catch (error) {
+    setSitemapStatus(`Fetch failed: ${error.message}`, 'error');
+  } finally {
+    fetchSitemapButton.disabled = false;
+  }
+}
+
+async function copySitemapUrls() {
+  if (sitemapAllUrls.length === 0) {
+    setSitemapStatus('No URLs loaded yet.', 'error');
+    return;
+  }
+  const filtered = getFilteredSitemapUrls();
+  try {
+    await navigator.clipboard.writeText(filtered.map((e) => e.loc).join('\n'));
+    setSitemapStatus(`Copied ${filtered.length} URLs to clipboard.`, 'success');
+  } catch (error) {
+    setSitemapStatus(`Copy failed: ${error.message}`, 'error');
   }
 }
 
@@ -934,40 +1824,35 @@ function buildUserPrompt({ logsText, context, styleInstruction }) {
   ].join('\n');
 }
 
-async function summarizeViaDirectDeepSeek({ apiKey, model, report, settings }) {
+async function summarizeViaDirectProvider({ provider, apiKey, model, baseUrl, report, settings }) {
   const logsText = trimToMaxChars(redactSensitiveText(report.text), 14000);
-  const body = {
-    model,
-    temperature: 0.2,
-    max_tokens: 900,
-    messages: [
-      {
-        role: 'system',
-        content: buildSystemPrompt(),
-      },
-      {
-        role: 'user',
-        content: buildUserPrompt({
-          logsText,
-          styleInstruction: getSummaryInstruction(settings.summaryStyle),
-          context: {
-            pageUrl: report.pageUrl || '',
-            levelPreset: settings.levelPreset,
-            format: settings.format,
-            selectedCount: Number(report.count) || 0,
-            uniqueCount: Number(report.uniqueCount) || 0,
-          },
-        }),
-      },
-    ],
-  };
-
-  const response = await fetch(DEEPSEEK_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt = buildUserPrompt({
+    logsText,
+    styleInstruction: getSummaryInstruction(settings.summaryStyle),
+    context: {
+      pageUrl: report.pageUrl || '',
+      levelPreset: settings.levelPreset,
+      format: settings.format,
+      selectedCount: Number(report.count) || 0,
+      uniqueCount: Number(report.uniqueCount) || 0,
     },
+  });
+
+  const { endpoint, headers, body } = buildFetchOptions({
+    provider,
+    apiKey,
+    model,
+    systemPrompt,
+    userPrompt,
+    baseUrl,
+  });
+
+  const providerLabel = AI_PROVIDERS[provider]?.label || provider;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -981,27 +1866,27 @@ async function summarizeViaDirectDeepSeek({ apiKey, model, report, settings }) {
       if (raw) {
         reason = raw.slice(0, 300);
       }
-      throw new Error(`DeepSeek request failed: ${reason}`, { cause: error });
+      throw new Error(`${providerLabel} request failed: ${reason}`, { cause: error });
     }
-    throw new Error(`DeepSeek request failed: ${reason}`);
+    throw new Error(`${providerLabel} request failed: ${reason}`);
   }
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error('DeepSeek returned non-JSON response.', { cause: error });
+    throw new Error(`${providerLabel} returned non-JSON response.`, { cause: error });
   }
 
-  const summary = parsed?.choices?.[0]?.message?.content;
+  const { summary, usage, model: respModel } = parseAiResponse(provider, parsed);
   if (!summary || typeof summary !== 'string') {
-    throw new Error('DeepSeek response missing summary.');
+    throw new Error(`${providerLabel} response missing summary.`);
   }
 
   return {
     summary,
-    usage: parsed.usage || null,
-    model: parsed.model || model,
+    usage: usage || null,
+    model: respModel || model,
   };
 }
 
@@ -1021,7 +1906,7 @@ function isBackgroundUnavailableError(error) {
   );
 }
 
-async function saveDeepSeekKey() {
+async function saveApiKey() {
   const input = apiKeyInput.value.trim();
   if (!input) {
     setSettingsStatus('Please paste an API key first.', 'error');
@@ -1029,10 +1914,9 @@ async function saveDeepSeekKey() {
   }
 
   try {
-    const settings = readSettingsFromUi();
-    await saveDeepSeekLocalConfig({
+    await saveProviderLocalConfig({
+      provider: currentProvider,
       apiKey: input,
-      model: settings.model,
     });
     setApiKeyState(true);
     apiKeyInput.value = '';
@@ -1042,13 +1926,26 @@ async function saveDeepSeekKey() {
   }
 }
 
-async function clearDeepSeekKey() {
+async function clearApiKey() {
   try {
-    await clearDeepSeekLocalKey();
+    await clearProviderLocalKey(currentProvider);
     setApiKeyState(false);
     setSettingsStatus('API key cleared.', 'success');
   } catch (error) {
     setSettingsStatus(`Clear failed: ${error.message}`, 'error');
+  }
+}
+
+async function saveOllamaUrl() {
+  const url = ollamaUrlInput.value.trim();
+  try {
+    await saveProviderLocalConfig({
+      provider: 'ollama',
+      baseUrl: url || 'http://localhost:11434',
+    });
+    setSettingsStatus('Ollama URL saved.', 'success');
+  } catch (error) {
+    setSettingsStatus(`Save failed: ${error.message}`, 'error');
   }
 }
 
@@ -1063,13 +1960,15 @@ async function generateAiBrief() {
     return;
   }
 
-  const config = await getDeepSeekLocalConfig();
-  if (!config.apiKey) {
+  const config = await getProviderLocalConfig(currentProvider);
+  if (AI_PROVIDERS[currentProvider]?.authType !== 'none' && !config.apiKey) {
     setApiKeyState(false);
-    setAiStatus('Save DeepSeek key first.', 'error');
+    setAiStatus(`Save ${AI_PROVIDERS[currentProvider]?.label || 'API'} key first.`, 'error');
     return;
   }
-  setApiKeyState(true);
+  setApiKeyState(Boolean(config.apiKey));
+
+  const selectedModel = getSelectedModel(config.model);
 
   summarizeButton.disabled = true;
   setAiStatus('Generating AI brief...');
@@ -1078,8 +1977,9 @@ async function generateAiBrief() {
     let result = null;
     try {
       const backgroundResp = await sendBackgroundMessage({
-        type: 'DEEPSEEK_SUMMARIZE',
-        model: settings.model,
+        type: 'AI_SUMMARIZE',
+        provider: currentProvider,
+        model: selectedModel,
         logsText: lastReport.text,
         pageUrl: lastReport.pageUrl,
         levelPreset: settings.levelPreset,
@@ -1094,7 +1994,7 @@ async function generateAiBrief() {
         result = {
           summary: backgroundResp.summary,
           usage: backgroundResp.usage,
-          model: backgroundResp.model || settings.model,
+          model: backgroundResp.model || selectedModel,
         };
       } else if (backgroundResp && backgroundResp.error) {
         throw new Error(backgroundResp.error);
@@ -1103,18 +2003,22 @@ async function generateAiBrief() {
       if (!isBackgroundUnavailableError(bgError)) {
         // Use fallback anyway to keep flow resilient.
       }
-      result = await summarizeViaDirectDeepSeek({
+      result = await summarizeViaDirectProvider({
+        provider: currentProvider,
         apiKey: config.apiKey,
-        model: settings.model,
+        model: selectedModel,
+        baseUrl: config.baseUrl,
         report: lastReport,
         settings,
       });
     }
 
     if (!result) {
-      result = await summarizeViaDirectDeepSeek({
+      result = await summarizeViaDirectProvider({
+        provider: currentProvider,
         apiKey: config.apiKey,
-        model: settings.model,
+        model: selectedModel,
+        baseUrl: config.baseUrl,
         report: lastReport,
         settings,
       });
@@ -1165,8 +2069,9 @@ async function copySummary() {
 
 async function syncSelectedModelToStorage() {
   try {
-    await saveDeepSeekLocalConfig({
-      model: modelSelect.value,
+    await saveProviderLocalConfig({
+      provider: currentProvider,
+      model: getSelectedModel(),
     });
   } catch {
     // Ignore model sync errors.
@@ -1174,10 +2079,15 @@ async function syncSelectedModelToStorage() {
 }
 
 function bindEvents() {
-  panelTabButtons.forEach((button) => {
+  categoryButtons.forEach((button) => {
     button.addEventListener('click', () => {
-      setActiveView(button.dataset.view);
-      saveSettings();
+      const cat = button.dataset.category;
+      const cfg = CATEGORIES[cat];
+      if (cfg) {
+        // Switch to the first view of this category
+        setActiveView(cfg.views[0]);
+        saveSettings();
+      }
     });
   });
 
@@ -1205,6 +2115,10 @@ function bindEvents() {
     });
   });
 
+  modelInput.addEventListener('change', () => {
+    syncSelectedModelToStorage();
+  });
+
   [maxEntriesInput, maxCharsInput].forEach((element) => {
     element.addEventListener('input', () => {
       saveSettings();
@@ -1225,8 +2139,35 @@ function bindEvents() {
   extractContextButton.addEventListener('click', generatePageContext);
   condenseContextButton.addEventListener('click', condensePageContextWithAi);
   copyContextButton.addEventListener('click', copyPageContext);
-  saveKeyButton.addEventListener('click', saveDeepSeekKey);
-  clearKeyButton.addEventListener('click', clearDeepSeekKey);
+  saveKeyButton.addEventListener('click', saveApiKey);
+  clearKeyButton.addEventListener('click', clearApiKey);
+  saveOllamaUrlButton.addEventListener('click', saveOllamaUrl);
+  providerSelect.addEventListener('change', () => {
+    switchProvider(providerSelect.value);
+  });
+
+  // SEO panel
+  scanSeoButton.addEventListener('click', scanSeoMeta);
+  copySeoButton.addEventListener('click', copySeoReport);
+
+  // Schema panel
+  scanSchemaButton.addEventListener('click', scanStructuredData);
+  testRichResultsButton.addEventListener('click', openRichResultsTest);
+  copySchemaButton.addEventListener('click', copySchemaData);
+
+  // Sitemap panel
+  fetchSitemapButton.addEventListener('click', fetchSitemap);
+  copySitemapUrlsButton.addEventListener('click', copySitemapUrls);
+  if (sitemapSearchInputEl) {
+    sitemapSearchInputEl.addEventListener('input', () => {
+      if (sitemapAllUrls.length > 0) refreshSitemapDisplay();
+    });
+  }
+  if (sitemapPatternInputEl) {
+    sitemapPatternInputEl.addEventListener('input', () => {
+      if (sitemapAllUrls.length > 0) refreshSitemapDisplay();
+    });
+  }
 }
 
 async function initialize() {
@@ -1237,7 +2178,7 @@ async function initialize() {
   setContextStatus('Context status: idle');
   setSettingsStatus('Settings status: idle');
   contextAiTextEl.textContent = 'AI condensed context will appear here after generation.';
-  await Promise.all([refreshPreview(), loadDeepSeekConfig()]);
+  await Promise.all([refreshPreview(), loadAiConfig()]);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

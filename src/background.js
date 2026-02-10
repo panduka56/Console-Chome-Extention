@@ -1,9 +1,9 @@
-const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions';
-const STORAGE_KEYS = {
-  apiKey: 'deepseek_api_key',
-  model: 'deepseek_model',
-};
-const DEFAULT_MODEL = 'deepseek-chat';
+import {
+  AI_PROVIDERS,
+  PROVIDER_STORAGE_KEYS,
+  buildFetchOptions,
+  parseAiResponse,
+} from './lib/ai-providers.js';
 
 function trimToMaxChars(text, maxChars) {
   if (typeof text !== 'string') {
@@ -82,88 +82,118 @@ function buildUserPrompt({ logsText, context, styleInstruction }) {
   ].join('\n');
 }
 
-async function getConfigFromStorage() {
+// --- Unified AI config helpers ---
+
+async function getActiveProvider() {
   const stored = await chrome.storage.local.get([
-    STORAGE_KEYS.apiKey,
-    STORAGE_KEYS.model,
+    PROVIDER_STORAGE_KEYS.activeProvider,
   ]);
-  const apiKey =
-    typeof stored[STORAGE_KEYS.apiKey] === 'string'
-      ? stored[STORAGE_KEYS.apiKey]
-      : '';
-  const model =
-    typeof stored[STORAGE_KEYS.model] === 'string'
-      ? stored[STORAGE_KEYS.model]
-      : DEFAULT_MODEL;
+  const provider = stored[PROVIDER_STORAGE_KEYS.activeProvider];
+  return typeof provider === 'string' && AI_PROVIDERS[provider]
+    ? provider
+    : 'deepseek';
+}
+
+async function getProviderConfig(provider) {
+  const p = provider || (await getActiveProvider());
+  const config = AI_PROVIDERS[p];
+  if (!config) throw new Error(`Unknown provider: ${p}`);
+
+  const keyField = PROVIDER_STORAGE_KEYS[`${p}_apiKey`];
+  const modelField = PROVIDER_STORAGE_KEYS[`${p}_model`];
+  const baseUrlField = PROVIDER_STORAGE_KEYS[`${p}_baseUrl`];
+
+  const keys = [keyField, modelField, baseUrlField].filter(Boolean);
+  const stored = await chrome.storage.local.get(keys);
+
   return {
-    apiKey,
-    model,
+    provider: p,
+    apiKey: keyField ? (stored[keyField] || '') : '',
+    model: modelField ? (stored[modelField] || config.defaultModel) : config.defaultModel,
+    baseUrl: baseUrlField ? (stored[baseUrlField] || '') : '',
   };
 }
 
-async function saveConfigToStorage({ apiKey, model }) {
+async function saveProviderConfig({ provider, apiKey, model, baseUrl }) {
+  const p = provider || (await getActiveProvider());
   const update = {};
 
   if (typeof apiKey === 'string') {
     const normalizedKey = apiKey.trim();
-    if (!normalizedKey) {
-      throw new Error('API key is empty.');
-    }
-    update[STORAGE_KEYS.apiKey] = normalizedKey;
+    if (!normalizedKey) throw new Error('API key is empty.');
+    const keyField = PROVIDER_STORAGE_KEYS[`${p}_apiKey`];
+    if (keyField) update[keyField] = normalizedKey;
   }
 
   if (typeof model === 'string' && model.trim()) {
-    update[STORAGE_KEYS.model] = model.trim();
+    const modelField = PROVIDER_STORAGE_KEYS[`${p}_model`];
+    if (modelField) update[modelField] = model.trim();
+  }
+
+  if (typeof baseUrl === 'string') {
+    const baseUrlField = PROVIDER_STORAGE_KEYS[`${p}_baseUrl`];
+    if (baseUrlField) update[baseUrlField] = baseUrl.trim();
   }
 
   if (Object.keys(update).length > 0) {
     await chrome.storage.local.set(update);
   }
 
-  const config = await getConfigFromStorage();
+  const config = await getProviderConfig(p);
   return {
+    provider: p,
+    hasApiKey: Boolean(config.apiKey),
+    model: config.model,
+    baseUrl: config.baseUrl,
+  };
+}
+
+async function setActiveProviderStorage(provider) {
+  if (!AI_PROVIDERS[provider]) throw new Error(`Unknown provider: ${provider}`);
+  await chrome.storage.local.set({
+    [PROVIDER_STORAGE_KEYS.activeProvider]: provider,
+  });
+}
+
+async function clearProviderKey(provider) {
+  const p = provider || (await getActiveProvider());
+  const keyField = PROVIDER_STORAGE_KEYS[`${p}_apiKey`];
+  if (keyField) {
+    await chrome.storage.local.remove(keyField);
+  }
+  const config = await getProviderConfig(p);
+  return {
+    provider: p,
     hasApiKey: Boolean(config.apiKey),
     model: config.model,
   };
 }
 
-async function clearApiKey() {
-  await chrome.storage.local.remove(STORAGE_KEYS.apiKey);
-  const config = await getConfigFromStorage();
-  return {
-    hasApiKey: Boolean(config.apiKey),
-    model: config.model,
-  };
-}
+// --- Unified AI call ---
 
-async function callDeepSeek({ model, apiKey, logsText, context }) {
+async function callAiProvider({ provider, apiKey, model, baseUrl, logsText, context }) {
   const clippedLogs = trimToMaxChars(redactSensitiveText(logsText), 14000);
-  const body = {
-    model,
-    temperature: 0.2,
-    max_tokens: 900,
-    messages: [
-      {
-        role: 'system',
-        content: buildSystemPrompt(),
-      },
-      {
-        role: 'user',
-        content: buildUserPrompt({
-          logsText: clippedLogs,
-          context,
-          styleInstruction: context.styleInstruction,
-        }),
-      },
-    ],
-  };
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt = buildUserPrompt({
+    logsText: clippedLogs,
+    context,
+    styleInstruction: context.styleInstruction,
+  });
 
-  const response = await fetch(DEEPSEEK_ENDPOINT, {
+  const { endpoint, headers, body } = buildFetchOptions({
+    provider,
+    apiKey,
+    model,
+    systemPrompt,
+    userPrompt,
+    baseUrl,
+  });
+
+  const providerLabel = AI_PROVIDERS[provider]?.label || provider;
+
+  const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -177,29 +207,31 @@ async function callDeepSeek({ model, apiKey, logsText, context }) {
       if (rawText) {
         errorReason = rawText.slice(0, 300);
       }
-      throw new Error(`DeepSeek request failed: ${errorReason}`, { cause: error });
+      throw new Error(`${providerLabel} request failed: ${errorReason}`, { cause: error });
     }
-    throw new Error(`DeepSeek request failed: ${errorReason}`);
+    throw new Error(`${providerLabel} request failed: ${errorReason}`);
   }
 
   let parsedResponse;
   try {
     parsedResponse = JSON.parse(rawText);
   } catch (error) {
-    throw new Error('DeepSeek returned a non-JSON response.', { cause: error });
+    throw new Error(`${providerLabel} returned a non-JSON response.`, { cause: error });
   }
 
-  const summary = parsedResponse?.choices?.[0]?.message?.content;
+  const { summary, usage, model: respModel } = parseAiResponse(provider, parsedResponse);
   if (!summary || typeof summary !== 'string') {
-    throw new Error('DeepSeek response did not contain summary text.');
+    throw new Error(`${providerLabel} response did not contain summary text.`);
   }
 
   return {
     summary,
-    usage: parsedResponse.usage || null,
-    model: parsedResponse.model || model,
+    usage: usage || null,
+    model: respModel || model,
   };
 }
+
+// --- Message listener ---
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
@@ -208,55 +240,100 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         throw new Error('Invalid message.');
       }
 
-      if (message.type === 'DEEPSEEK_GET_CONFIG') {
-        const config = await getConfigFromStorage();
+      // --- Sitemap fetch ---
+      if (message.type === 'FETCH_SITEMAP') {
+        if (!message.url || typeof message.url !== 'string') {
+          throw new Error('No URL provided for sitemap fetch.');
+        }
+        const sitemapResp = await fetch(message.url, {
+          headers: { Accept: 'application/xml, text/xml, text/plain' },
+        });
+        if (!sitemapResp.ok) {
+          throw new Error(
+            `Sitemap fetch failed: ${sitemapResp.status} ${sitemapResp.statusText}`
+          );
+        }
+        const xml = await sitemapResp.text();
         sendResponse({
           ok: true,
+          xml,
+          contentType: sitemapResp.headers.get('content-type') || '',
+        });
+        return;
+      }
+
+      // --- AI config: get (unified + legacy alias) ---
+      if (message.type === 'AI_GET_CONFIG' || message.type === 'DEEPSEEK_GET_CONFIG') {
+        const provider = message.provider || (await getActiveProvider());
+        const config = await getProviderConfig(provider);
+        sendResponse({
+          ok: true,
+          provider: config.provider,
           hasApiKey: Boolean(config.apiKey),
           model: config.model,
+          baseUrl: config.baseUrl,
+          activeProvider: await getActiveProvider(),
         });
         return;
       }
 
-      if (message.type === 'DEEPSEEK_SAVE_CONFIG') {
-        const saved = await saveConfigToStorage({
+      // --- AI config: save (unified + legacy alias) ---
+      if (message.type === 'AI_SAVE_CONFIG' || message.type === 'DEEPSEEK_SAVE_CONFIG') {
+        const provider = message.provider || (await getActiveProvider());
+        const saved = await saveProviderConfig({
+          provider,
           apiKey: message.apiKey,
           model: message.model,
+          baseUrl: message.baseUrl,
         });
+        sendResponse({ ok: true, ...saved });
+        return;
+      }
+
+      // --- AI config: clear key (unified + legacy alias) ---
+      if (message.type === 'AI_CLEAR_KEY' || message.type === 'DEEPSEEK_CLEAR_KEY') {
+        const provider = message.provider || (await getActiveProvider());
+        const cleared = await clearProviderKey(provider);
+        sendResponse({ ok: true, ...cleared });
+        return;
+      }
+
+      // --- AI config: set active provider ---
+      if (message.type === 'AI_SET_PROVIDER') {
+        await setActiveProviderStorage(message.provider);
+        const config = await getProviderConfig(message.provider);
         sendResponse({
           ok: true,
-          ...saved,
+          provider: message.provider,
+          hasApiKey: Boolean(config.apiKey),
+          model: config.model,
+          baseUrl: config.baseUrl,
         });
         return;
       }
 
-      if (message.type === 'DEEPSEEK_CLEAR_KEY') {
-        const cleared = await clearApiKey();
-        sendResponse({
-          ok: true,
-          ...cleared,
-        });
-        return;
-      }
-
-      if (message.type === 'DEEPSEEK_SUMMARIZE') {
-        const config = await getConfigFromStorage();
+      // --- AI summarize (unified + legacy alias) ---
+      if (message.type === 'AI_SUMMARIZE' || message.type === 'DEEPSEEK_SUMMARIZE') {
+        const provider = message.provider || (await getActiveProvider());
+        const config = await getProviderConfig(provider);
         const apiKey = config.apiKey;
         const model =
           typeof message.model === 'string' && message.model.trim()
             ? message.model.trim()
             : config.model;
 
-        if (!apiKey) {
-          throw new Error('No DeepSeek API key saved.');
+        if (AI_PROVIDERS[provider]?.authType !== 'none' && !apiKey) {
+          throw new Error(`No API key saved for ${AI_PROVIDERS[provider]?.label || provider}.`);
         }
         if (!message.logsText || typeof message.logsText !== 'string') {
           throw new Error('No logs available for summarization.');
         }
 
-        const summaryResult = await callDeepSeek({
-          model,
+        const summaryResult = await callAiProvider({
+          provider,
           apiKey,
+          model,
+          baseUrl: config.baseUrl,
           logsText: message.logsText,
           context: {
             pageUrl: message.pageUrl || sender.tab?.url || '',

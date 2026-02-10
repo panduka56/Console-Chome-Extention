@@ -824,11 +824,295 @@ ${rows}
     { passive: true }
   );
 
+  // === SECTION: SEO Meta Extraction ===
+
+  function extractSeoMeta() {
+    const title = document.title || '';
+    const titleLen = title.length;
+    const titleStatus =
+      titleLen >= 50 && titleLen <= 60
+        ? 'pass'
+        : titleLen >= 30 && titleLen <= 70
+          ? 'warn'
+          : titleLen === 0
+            ? 'fail'
+            : 'warn';
+
+    const desc = getMetaContent('meta[name="description"]');
+    const descLen = desc.length;
+    const descStatus =
+      descLen >= 120 && descLen <= 160
+        ? 'pass'
+        : descLen >= 70 && descLen <= 200
+          ? 'warn'
+          : descLen === 0
+            ? 'fail'
+            : 'warn';
+
+    const canonical =
+      document.querySelector('link[rel="canonical"]')?.href || '';
+    const robots = getMetaContent('meta[name="robots"]');
+    const viewport = getMetaContent('meta[name="viewport"]');
+
+    const og = {
+      title: getMetaContent('meta[property="og:title"]'),
+      description: getMetaContent('meta[property="og:description"]'),
+      image: getMetaContent('meta[property="og:image"]'),
+      url: getMetaContent('meta[property="og:url"]'),
+      type: getMetaContent('meta[property="og:type"]'),
+      siteName: getMetaContent('meta[property="og:site_name"]'),
+    };
+
+    const twitter = {
+      card: getMetaContent('meta[name="twitter:card"]'),
+      title: getMetaContent('meta[name="twitter:title"]'),
+      description: getMetaContent('meta[name="twitter:description"]'),
+      image: getMetaContent('meta[name="twitter:image"]'),
+      creator: getMetaContent('meta[name="twitter:creator"]'),
+      site: getMetaContent('meta[name="twitter:site"]'),
+    };
+
+    const hreflangLinks = Array.from(
+      document.querySelectorAll('link[rel="alternate"][hreflang]')
+    );
+    const hreflang = hreflangLinks.map((link) => ({
+      lang: link.getAttribute('hreflang') || '',
+      href: link.href || '',
+    }));
+
+    // Heading hierarchy
+    const allHeadings = Array.from(
+      document.querySelectorAll('h1, h2, h3, h4, h5, h6')
+    );
+    const h1Count = document.querySelectorAll('h1').length;
+    const hierarchy = allHeadings.slice(0, 50).map((h) => ({
+      level: parseInt(h.tagName.substring(1), 10),
+      text: normalizeWhitespace(h.textContent || '').slice(0, 120),
+    }));
+    const headingIssues = [];
+    if (h1Count === 0) headingIssues.push('No H1 tag found');
+    if (h1Count > 1) headingIssues.push(`Multiple H1 tags (${h1Count})`);
+    // Check nesting gaps
+    for (let i = 1; i < hierarchy.length; i++) {
+      if (hierarchy[i].level > hierarchy[i - 1].level + 1) {
+        headingIssues.push(
+          `Heading skip: H${hierarchy[i - 1].level} → H${hierarchy[i].level}`
+        );
+        break;
+      }
+    }
+
+    // Image alt coverage
+    const images = Array.from(document.images || []);
+    const withAlt = images.filter(
+      (img) => (img.getAttribute('alt') || '').trim().length > 0
+    ).length;
+    const withoutAlt = images.length - withAlt;
+    const coverage =
+      images.length > 0 ? Math.round((withAlt / images.length) * 100) : 100;
+    const imgStatus =
+      coverage >= 80 ? 'pass' : coverage >= 50 ? 'warn' : 'fail';
+
+    return {
+      title: { value: title, length: titleLen, status: titleStatus },
+      metaDescription: { value: desc, length: descLen, status: descStatus },
+      canonical,
+      robots,
+      viewport,
+      og,
+      twitter,
+      hreflang,
+      headings: {
+        h1Count,
+        hierarchy,
+        issues: headingIssues,
+        status: h1Count === 1 ? 'pass' : h1Count === 0 ? 'warn' : 'fail',
+      },
+      images: {
+        total: images.length,
+        withAlt,
+        withoutAlt,
+        coverage,
+        status: imgStatus,
+      },
+    };
+  }
+
+  // === SECTION: Structured Data Extraction ===
+
+  const SCHEMA_RULES = {
+    Article: {
+      required: ['headline', 'author', 'datePublished'],
+      recommended: ['image', 'publisher'],
+    },
+    NewsArticle: {
+      required: ['headline', 'datePublished'],
+      recommended: ['author', 'image', 'publisher'],
+    },
+    BlogPosting: {
+      required: ['headline', 'author', 'datePublished'],
+      recommended: ['image'],
+    },
+    Product: {
+      required: ['name'],
+      recommended: ['image', 'description', 'offers'],
+    },
+    FAQPage: { required: ['mainEntity'], recommended: [] },
+    BreadcrumbList: { required: ['itemListElement'], recommended: [] },
+    Organization: { required: ['name'], recommended: ['url', 'logo'] },
+    LocalBusiness: {
+      required: ['name', 'address'],
+      recommended: ['telephone', 'openingHoursSpecification'],
+    },
+    Event: {
+      required: ['name', 'startDate'],
+      recommended: ['location', 'image'],
+    },
+    Person: { required: ['name'], recommended: ['jobTitle'] },
+    WebSite: { required: ['name', 'url'], recommended: ['potentialAction'] },
+    Recipe: {
+      required: ['name'],
+      recommended: ['image', 'recipeIngredient', 'recipeInstructions'],
+    },
+    VideoObject: {
+      required: ['name', 'uploadDate'],
+      recommended: ['description', 'thumbnailUrl'],
+    },
+    HowTo: { required: ['name', 'step'], recommended: ['image'] },
+  };
+
+  function validateSchemaType(type, data) {
+    const rules = SCHEMA_RULES[type];
+    if (!rules) return { errors: [], warnings: [] };
+    const errors = rules.required
+      .filter((prop) => !data[prop])
+      .map((prop) => `Missing required: ${prop}`);
+    const warnings = rules.recommended
+      .filter((prop) => !data[prop])
+      .map((prop) => `Missing recommended: ${prop}`);
+    return { errors, warnings };
+  }
+
+  function extractJsonLd() {
+    const scripts = document.querySelectorAll(
+      'script[type="application/ld+json"]'
+    );
+    const results = [];
+    for (const script of scripts) {
+      try {
+        const data = JSON.parse(script.textContent);
+        const items = Array.isArray(data)
+          ? data
+          : data['@graph']
+            ? data['@graph']
+            : [data];
+        for (const item of items) {
+          const type = item['@type'] || 'Unknown';
+          const validation = validateSchemaType(type, item);
+          results.push({
+            raw: item,
+            type,
+            errors: validation.errors,
+            warnings: validation.warnings,
+          });
+        }
+      } catch (e) {
+        results.push({
+          raw: null,
+          type: 'ParseError',
+          errors: [e.message],
+          warnings: [],
+        });
+      }
+    }
+    return results;
+  }
+
+  function extractMicrodata() {
+    const scopes = document.querySelectorAll('[itemscope]');
+    return Array.from(scopes)
+      .slice(0, 20)
+      .map((scope) => {
+        const type = scope.getAttribute('itemtype') || '';
+        const shortType = type.split('/').pop() || type;
+        const props = {};
+        scope.querySelectorAll('[itemprop]').forEach((propEl) => {
+          const name = propEl.getAttribute('itemprop');
+          const value =
+            propEl.getAttribute('content') ||
+            propEl.textContent?.trim() ||
+            propEl.getAttribute('href') ||
+            '';
+          props[name] = normalizeWhitespace(value).slice(0, 200);
+        });
+        return { type: shortType, fullType: type, properties: props };
+      });
+  }
+
+  function extractRdfa() {
+    const elements = document.querySelectorAll('[typeof]');
+    return Array.from(elements)
+      .slice(0, 20)
+      .map((el) => {
+        const type = el.getAttribute('typeof') || '';
+        const about = el.getAttribute('about') || '';
+        const props = {};
+        el.querySelectorAll('[property]').forEach((propEl) => {
+          const name = propEl.getAttribute('property') || '';
+          const value =
+            propEl.getAttribute('content') || propEl.textContent?.trim() || '';
+          props[name] = normalizeWhitespace(value).slice(0, 200);
+        });
+        return { type, about, properties: props };
+      });
+  }
+
+  function extractStructuredData() {
+    const jsonLd = extractJsonLd();
+    const microdata = extractMicrodata();
+    const rdfa = extractRdfa();
+
+    const allTypes = new Set();
+    jsonLd.forEach((item) => allTypes.add(item.type));
+    microdata.forEach((item) => allTypes.add(item.type));
+    rdfa.forEach((item) => allTypes.add(item.type));
+
+    let totalWarnings = 0;
+    jsonLd.forEach((item) => {
+      totalWarnings += item.errors.length + item.warnings.length;
+    });
+
+    return {
+      jsonLd,
+      microdata,
+      rdfa,
+      stats: {
+        typesFound: allTypes.size,
+        jsonLdCount: jsonLd.length,
+        microdataCount: microdata.length,
+        rdfaCount: rdfa.length,
+        validationWarnings: totalWarnings,
+      },
+    };
+  }
+
+  // === SECTION: Message Handler ===
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message.type !== 'string') {
       return;
     }
     if (sender && sender.id && sender.id !== chrome.runtime.id) {
+      return;
+    }
+
+    if (message.type === 'GET_SEO_META') {
+      sendResponse({ ok: true, data: extractSeoMeta() });
+      return;
+    }
+
+    if (message.type === 'GET_STRUCTURED_DATA') {
+      sendResponse({ ok: true, data: extractStructuredData() });
       return;
     }
 

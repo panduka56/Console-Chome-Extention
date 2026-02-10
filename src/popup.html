@@ -61,19 +61,14 @@
         </div>
       </header>
 
-      <nav class="panelTabs" aria-label="Extension sections">
-        <button class="panelTab is-active" type="button" data-view="logs">
-          Main
-        </button>
-        <button class="panelTab" type="button" data-view="brief">
-          AI Brief
-        </button>
-        <button class="panelTab" type="button" data-view="context">
-          Context
-        </button>
-        <button class="panelTab" type="button" data-view="settings">
-          Settings
-        </button>
+      <nav class="navBar" aria-label="Extension sections">
+        <div class="categorySwitch" role="radiogroup" aria-label="Category">
+          <button class="categoryBtn is-active" type="button" data-category="console">Console</button>
+          <button class="categoryBtn" type="button" data-category="pageintel">Page Intel</button>
+          <button class="categoryBtn" type="button" data-category="context">Context</button>
+          <button class="categoryBtn" type="button" data-category="settings">Settings</button>
+        </div>
+        <div class="subTabs" id="subTabsBar"></div>
       </nav>
 
       <section id="logsView" class="view is-active">
@@ -176,7 +171,7 @@
           </div>
           <p class="hint">
             Uses captured console payload from Main and your configured
-            DeepSeek settings.
+            AI provider settings.
           </p>
           <div class="aiActions">
             <button
@@ -228,10 +223,90 @@ AI condensed context will appear here after generation.</pre
         </section>
       </section>
 
+      <section id="seoView" class="view">
+        <section class="card">
+          <div class="cardHead">
+            <h2>SEO & Meta Overview</h2>
+          </div>
+          <p class="hint">Scan page for SEO metadata, Open Graph, Twitter Cards, heading hierarchy, and image alt coverage.</p>
+          <div class="seoActions">
+            <button id="scanSeoButton" class="actionBtn primary" type="button">Scan Page</button>
+            <button id="copySeoButton" class="actionBtn" type="button">Copy Report</button>
+          </div>
+          <div id="seoResults" class="seoResults">
+            <p class="hint">Click "Scan Page" to extract SEO metadata.</p>
+          </div>
+          <p id="seoStatus" class="statusLine">SEO status: idle</p>
+        </section>
+      </section>
+
+      <section id="schemaView" class="view">
+        <section class="card">
+          <div class="cardHead">
+            <h2>Structured Data</h2>
+          </div>
+          <div class="schemaActions">
+            <button id="scanSchemaButton" class="actionBtn primary" type="button">Scan Page</button>
+            <button id="testRichResultsButton" class="actionBtn" type="button">Test in Google</button>
+            <button id="copySchemaButton" class="actionBtn" type="button">Copy Data</button>
+          </div>
+          <div class="stats" id="schemaStats" style="display: none;">
+            <article><p>Types</p><strong id="schemaStatTypes">0</strong></article>
+            <article><p>JSON-LD</p><strong id="schemaStatJsonLd">0</strong></article>
+            <article><p>Microdata</p><strong id="schemaStatMicrodata">0</strong></article>
+            <article><p>Warnings</p><strong id="schemaStatWarnings">0</strong></article>
+          </div>
+          <div id="schemaResults" class="schemaResults">
+            <p class="hint">Click "Scan Page" to extract structured data.</p>
+          </div>
+          <p id="schemaStatus" class="statusLine">Schema status: idle</p>
+        </section>
+      </section>
+
+      <section id="sitemapView" class="view">
+        <section class="card">
+          <div class="cardHead">
+            <h2>Sitemap Explorer</h2>
+          </div>
+          <div class="sitemapUrlInput">
+            <label>
+              <span>Sitemap URL</span>
+              <input id="sitemapUrlInput" type="text" placeholder="https://example.com/sitemap.xml" />
+            </label>
+          </div>
+          <div class="sitemapActions">
+            <button id="fetchSitemapButton" class="actionBtn primary" type="button">Fetch Sitemap</button>
+            <button id="copySitemapUrlsButton" class="actionBtn" type="button">Copy URLs</button>
+          </div>
+          <div class="sitemapFilters" id="sitemapFilters" style="display: none;">
+            <div class="grid">
+              <label>
+                <span>Search URLs</span>
+                <input id="sitemapSearchInput" type="text" placeholder="Filter by path..." />
+              </label>
+              <label>
+                <span>Path pattern</span>
+                <input id="sitemapPatternInput" type="text" placeholder="/blog/*" />
+              </label>
+            </div>
+          </div>
+          <div class="stats" id="sitemapStats" style="display: none;">
+            <article><p>Total URLs</p><strong id="sitemapStatTotal">0</strong></article>
+            <article><p>Filtered</p><strong id="sitemapStatFiltered">0</strong></article>
+            <article><p>Domains</p><strong id="sitemapStatDomains">0</strong></article>
+            <article><p>Date Range</p><strong id="sitemapStatDates">-</strong></article>
+          </div>
+          <div id="sitemapResults" class="sitemapResults">
+            <p class="hint">Click "Fetch Sitemap" to discover and parse the sitemap.</p>
+          </div>
+          <p id="sitemapStatus" class="statusLine">Sitemap status: idle</p>
+        </section>
+      </section>
+
       <section id="settingsView" class="view">
         <section class="card aiCard">
           <div class="cardHead">
-            <h2>DeepSeek Settings</h2>
+            <h2>AI Provider Settings</h2>
             <span id="apiKeyState" class="statePill stateWarn"
               >Key missing</span
             >
@@ -239,12 +314,23 @@ AI condensed context will appear here after generation.</pre
           <p class="hint">
             API key and model settings are saved locally in extension storage.
           </p>
-          <div class="apiKeyRow">
+          <div class="grid">
+            <label>
+              <span>AI Provider</span>
+              <select id="providerSelect">
+                <option value="deepseek">DeepSeek</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="ollama">Ollama (Local)</option>
+              </select>
+            </label>
+          </div>
+          <div id="apiKeySection" class="apiKeyRow">
             <input
               id="apiKeyInput"
               type="password"
               autocomplete="off"
-              placeholder="Paste DeepSeek API key"
+              placeholder="Paste API key"
             />
             <button id="saveKeyButton" class="miniBtn" type="button">
               Save
@@ -253,13 +339,29 @@ AI condensed context will appear here after generation.</pre
               Clear
             </button>
           </div>
+          <div id="ollamaUrlSection" class="apiKeyRow" style="display: none;">
+            <input
+              id="ollamaUrlInput"
+              type="text"
+              autocomplete="off"
+              placeholder="http://localhost:11434"
+              value="http://localhost:11434"
+            />
+            <button id="saveOllamaUrlButton" class="miniBtn" type="button">
+              Save URL
+            </button>
+          </div>
           <div class="grid">
             <label>
               <span>Model</span>
-              <select id="modelSelect">
-                <option value="deepseek-chat">deepseek-chat</option>
-                <option value="deepseek-reasoner">deepseek-reasoner</option>
-              </select>
+              <select id="modelSelect"></select>
+              <input
+                id="modelInput"
+                class="inlineInput"
+                type="text"
+                placeholder="Enter model name"
+                style="display: none;"
+              />
             </label>
             <label>
               <span>AI output style</span>
